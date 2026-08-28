@@ -43,8 +43,11 @@ picks up the new version.
 
 Per shopping-list item the runner:
 
-1. Dismounts, walks to the nearest **Market Board** object (via vnavmesh if it's
-   far), and interacts with it. A retainer / summoning bell is not enough.
+1. Dismounts, finds a real **Market Board** object and interacts with it (walking
+   there with vnavmesh only when travel is allowed and one is within ~60 y). It
+   never opens the board UI "cold" — with no reachable Market Board the order
+   stops (`openFailed`) and the character does not move. With `skipTravel` it
+   only uses a board it is already standing at.
 2. Focuses the search box and types the item name with real keystrokes, then
    presses Enter. (Nothing else triggers the client's search.)
 3. Clicks the item in the results to open its listings.

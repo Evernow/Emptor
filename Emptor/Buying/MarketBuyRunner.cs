@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.Network.Structures;
 using Dalamud.Plugin.Services;
@@ -63,8 +64,11 @@ public sealed class MarketBuyRunner : IDisposable
     private string thinkReason = string.Empty;
     private Phase thinkNext;
 
+    private const float MovementGuardYalms = 6f;
+
     private IGameObject? board;
     private DateTime interactSentUtc;
+    private Vector3 boardApproachStartPos;
     private int listingCountSeen;
     private DateTime listingCountChangedUtc;
 
@@ -308,31 +312,39 @@ public sealed class MarketBuyRunner : IDisposable
 
             case Phase.LocateBoard:
             {
-                board = MarketBoardLocator.FindNearest();
+                var skip = order!.Request.SkipTravel;
+
+                // Only ever look for a board we could actually reach. With
+                // skipTravel we require one we're basically standing at — never
+                // pathfind, never open the board UI "cold".
+                board = MarketBoardLocator.FindNearest(
+                    skip ? MarketBoardLocator.InteractDistance + 1.5f : MarketBoardLocator.NavigateSearchRadius);
+
                 if (board is null)
                 {
-                    // No board object in range — fall back to opening the agent directly.
-                    MarketBoardUi.OpenBoard();
-                    interactSentUtc = DateTime.UtcNow;
-                    Goto(Phase.BoardOpenWait);
+                    StopItem(StopReason.OpenFailed, skip
+                        ? "Not standing at a Market Board (the caller disabled travel)."
+                        : "No Market Board found nearby.");
                     return;
                 }
 
                 var dist = MarketBoardLocator.DistanceTo(board) ?? 999f;
                 if (dist <= MarketBoardLocator.InteractDistance)
                 {
+                    boardApproachStartPos = GameState.PlayerPosition();
                     ThinkThen(HumanTiming.BeforeInteractBoard(), Phase.InteractBoard, "before-interact");
                     return;
                 }
 
-                if (order!.Request.SkipTravel)
+                if (skip)
                 {
-                    StopItem(StopReason.OpenFailed, $"Nearest Market Board is {dist:0}y away and the caller asked Emptor not to travel.");
+                    StopItem(StopReason.OpenFailed, $"A Market Board is {dist:0}y away — too far to reach without travelling.");
                     return;
                 }
 
                 if (Plugin.Instance.Configuration.UseNavigation && Navigation.Available && Navigation.IsReady())
                 {
+                    boardApproachStartPos = GameState.PlayerPosition();
                     Navigation.MoveCloseTo(board.Position, 3.4f);
                     Goto(Phase.NavigateBoard);
                     return;
@@ -349,6 +361,7 @@ public sealed class MarketBuyRunner : IDisposable
                 if (dist <= MarketBoardLocator.InteractDistance)
                 {
                     Navigation.Stop();
+                    boardApproachStartPos = GameState.PlayerPosition(); // reset guard baseline after the walk
                     ThinkThen(HumanTiming.BeforeInteractBoard(), Phase.InteractBoard, "before-interact");
                     return;
                 }
@@ -376,6 +389,16 @@ public sealed class MarketBuyRunner : IDisposable
                     ThinkThen(HumanTiming.OrientAfterOpen(), Phase.PrepSearch, "orient");
                     return;
                 }
+
+                // Safety: if interacting made the character run off (wrong object,
+                // out-of-range auto-approach), abort rather than travel blindly.
+                var drift = Vector3.Distance(GameState.PlayerPosition(), boardApproachStartPos);
+                if (boardApproachStartPos != default && drift > MovementGuardYalms)
+                {
+                    StopItem(StopReason.OpenFailed, $"Character moved {drift:0}y while opening the board — aborting.");
+                    return;
+                }
+
                 if (DateTime.UtcNow - interactSentUtc > TimeSpan.FromSeconds(2.5) && board is not null && Elapsed < BoardOpenTimeout)
                 {
                     MarketBoardLocator.Interact(board);

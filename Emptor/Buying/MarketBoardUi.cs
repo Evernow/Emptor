@@ -27,22 +27,8 @@ public static unsafe class MarketBoardUi
 
     public static bool IsResultOpen() => GameData.GameState.IsAddonReady(ItemSearchResultAddon);
 
-    /// <summary>Requests the ItemSearch agent to show. Returns true if it is (now) active.</summary>
-    public static bool OpenBoard()
-    {
-        var module = AgentModule.Instance();
-        if (module == null)
-            return false;
-
-        var agent = module->GetAgentByInternalId(AgentId.ItemSearch);
-        if (agent == null)
-            return false;
-
-        if (!agent->IsAgentActive())
-            agent->Show();
-
-        return agent->IsAgentActive();
-    }
+    // Note: Emptor never opens the board "cold" (agent->Show()). It only interacts
+    // with a real Market Board object it is standing at — see MarketBoardLocator.
 
     public static void HideBoard()
     {

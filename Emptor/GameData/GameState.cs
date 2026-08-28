@@ -47,6 +47,9 @@ public static class GameState
         return manager == null ? 0 : (long)manager->GetGil();
     }
 
+    public static System.Numerics.Vector3 PlayerPosition()
+        => Plugin.ObjectTable.LocalPlayer?.Position ?? default;
+
     public static unsafe bool IsAddonReady(string name)
     {
         var addon = Plugin.GameGui.GetAddonByName<AtkUnitBase>(name, 1);

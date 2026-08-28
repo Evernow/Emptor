@@ -11,25 +11,34 @@ namespace Emptor.GameData;
 /// <summary>Finds and interacts with a real Market Board object.</summary>
 public static class MarketBoardLocator
 {
+    /// <summary>How close counts as "at the board" (real 3D distance).</summary>
     public const float InteractDistance = 4.2f;
-    public const float SearchRadius = 90f;
 
-    public static IGameObject? FindNearest()
+    /// <summary>How far Emptor will walk to a board when travel is allowed.</summary>
+    public const float NavigateSearchRadius = 60f;
+
+    /// <summary>
+    /// Nearest targetable "Market Board" object within <paramref name="maxRange"/>
+    /// yalms (real 3D distance). Returns null if none — the caller must NOT
+    /// fall back to opening the board UI cold.
+    /// </summary>
+    public static IGameObject? FindNearest(float maxRange)
     {
         var me = Plugin.ObjectTable.LocalPlayer?.Position;
-        var boards = Plugin.ObjectTable.Where(IsMarketBoard);
         if (me is null)
-            return boards.FirstOrDefault();
-        return boards
-            .Where(b => Horizontal(me.Value, b.Position) <= SearchRadius)
-            .OrderBy(b => Horizontal(me.Value, b.Position))
+            return null;
+
+        return Plugin.ObjectTable
+            .Where(IsMarketBoard)
+            .Where(b => Vector3.Distance(me.Value, b.Position) <= maxRange)
+            .OrderBy(b => Vector3.Distance(me.Value, b.Position))
             .FirstOrDefault();
     }
 
     public static float? DistanceTo(IGameObject board)
     {
         var me = Plugin.ObjectTable.LocalPlayer?.Position;
-        return me is null ? null : Horizontal(me.Value, board.Position);
+        return me is null ? null : Vector3.Distance(me.Value, board.Position);
     }
 
     /// <summary>Target the board and send the real interact packet.</summary>
@@ -46,10 +55,12 @@ public static class MarketBoardLocator
     }
 
     private static bool IsMarketBoard(IGameObject o)
-        => o.IsTargetable
-           && o.ObjectKind is ObjectKind.EventObj or ObjectKind.HousingEventObject or ObjectKind.ReactionEventObject
-           && string.Equals(o.Name.TextValue, "Market Board", StringComparison.OrdinalIgnoreCase);
-
-    private static float Horizontal(Vector3 a, Vector3 b)
-        => MathF.Sqrt(((a.X - b.X) * (a.X - b.X)) + ((a.Z - b.Z) * (a.Z - b.Z)));
+    {
+        if (!o.IsTargetable)
+            return false;
+        if (o.ObjectKind is not (ObjectKind.EventObj or ObjectKind.HousingEventObject or ObjectKind.ReactionEventObject))
+            return false;
+        var name = o.Name.TextValue;
+        return name.Contains("Market Board", StringComparison.OrdinalIgnoreCase);
+    }
 }
