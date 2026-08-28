@@ -1,0 +1,91 @@
+name: Release
+
+# Manual: Actions tab -> Release -> Run workflow.
+# Bumps the version in Emptor.csproj, builds, tags, and publishes a GitHub Release
+# with Emptor.zip + Emptor.json attached. The DalamudPlugins repo's sync job then
+# picks up the new version.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Which part of the version to bump'
+        type: choice
+        default: patch
+        options: [ patch, minor, major ]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Bump version
+        id: bump
+        shell: pwsh
+        run: |
+          $csproj = 'Emptor/Emptor.csproj'
+          $text = Get-Content $csproj -Raw
+          if ($text -notmatch '<Version>([\d.]+)</Version>') { throw 'No <Version> in Emptor.csproj' }
+          $cur = [version]$Matches[1]
+          $b = if ($cur.Build   -lt 0) { 0 } else { $cur.Build }
+          switch ('${{ github.event.inputs.bump }}') {
+            'major' { $new = [version]::new($cur.Major + 1, 0, 0, 0) }
+            'minor' { $new = [version]::new($cur.Major, $cur.Minor + 1, 0, 0) }
+            default { $new = [version]::new($cur.Major, $cur.Minor, $b + 1, 0) }
+          }
+          $newStr = $new.ToString()
+          $text = $text -replace '<Version>[\d.]+</Version>', "<Version>$newStr</Version>"
+          Set-Content $csproj $text -NoNewline
+          "version=$newStr" >> $env:GITHUB_OUTPUT
+          "tag=v$newStr"    >> $env:GITHUB_OUTPUT
+          Write-Host "$($cur) -> $newStr"
+
+      - name: Download Dalamud
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://goatcorp.github.io/dalamud-distrib/latest.zip" -OutFile dalamud.zip
+          $dest = "$env:AppData\XIVLauncher\addon\Hooks\dev"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Expand-Archive -Path dalamud.zip -DestinationPath $dest -Force
+
+      - name: Build
+        run: dotnet build Emptor/Emptor.csproj -c Release --nologo
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = 'Emptor/bin/Release/Emptor'
+          if (-not (Test-Path "$out/latest.zip")) { throw 'DalamudPackager did not produce latest.zip' }
+          Copy-Item "$out/latest.zip"  'Emptor.zip'  -Force
+          Copy-Item "$out/Emptor.json" 'Emptor.json' -Force
+
+      - name: Commit version bump
+        shell: pwsh
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Emptor/Emptor.csproj
+          git commit -m "Release ${{ steps.bump.outputs.tag }}"
+          git push origin main
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.bump.outputs.tag }}
+          name: ${{ steps.bump.outputs.tag }}
+          target_commitish: main
+          generate_release_notes: true
+          files: |
+            Emptor.zip
+            Emptor.json

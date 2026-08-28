@@ -1,5 +1,7 @@
 name: Build
 
+# CI only. Releases are cut by the "Release" workflow (manual, from the Actions tab).
+
 on:
   push:
     branches: [ main ]
@@ -9,12 +11,7 @@ on:
   pull_request:
     paths:
       - 'Emptor/**'
-  release:
-    types: [ published ]
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build:
@@ -42,7 +39,7 @@ jobs:
         run: |
           $out = "Emptor/bin/Release/Emptor"
           if (-not (Test-Path "$out/latest.zip")) { throw "DalamudPackager did not produce latest.zip" }
-          Copy-Item "$out/latest.zip" "Emptor.zip" -Force
+          Copy-Item "$out/latest.zip"  "Emptor.zip"  -Force
           Copy-Item "$out/Emptor.json" "Emptor.json" -Force
 
       - name: Upload build artifact
@@ -50,13 +47,5 @@ jobs:
         with:
           name: Emptor
           path: |
-            Emptor.zip
-            Emptor.json
-
-      - name: Attach to release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
             Emptor.zip
             Emptor.json
