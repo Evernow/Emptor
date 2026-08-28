@@ -1,66 +1,64 @@
-# Dalamud Plugins
+# Emptor
 
-Custom Dalamud plugin repository.
+A Dalamud plugin that buys a shopping list off the FFXIV market board. For each
+entry `(item, quantity, max unit price, quality)` it buys the cheapest acceptable
+listings until the requested quantity is met, the price ceiling is hit, or
+listings run out. Targets vanilla (retail) FFXIV.
+
+- **In game** — `/emptor` opens a window with an editable shopping-list table
+  and a **Start** button. The status panel narrates every step.
+- **From another plugin** — a Dalamud IPC API (see below).
+
+Developed openly. Issues and PRs welcome.
 
 ## Install
 
-In game: **Dalamud Settings → Experimental → Custom Plugin Repositories**, add:
+Add this custom repository in **Dalamud Settings → Experimental → Custom Plugin
+Repositories**:
 
 ```
 https://raw.githubusercontent.com/Evernow/DalamudPlugins/main/pluginmaster.json
 ```
 
-Save, then find the plugins under `/xlplugins`.
+Then install **Emptor** from `/xlplugins`.
 
-## Plugins
-
-### Emptor
-
-Buys a shopping list off the FFXIV market board. For each entry
-`(item, quantity, max unit price, quality)` it buys the cheapest acceptable
-listings until the requested quantity is met, the price ceiling is hit, or
-listings run out. Targets vanilla (retail) FFXIV.
-
-- **In game** — `/emptor` opens a window with an editable shopping-list table
-  and a **Start** button.
-- **From another plugin** — a Dalamud IPC API (see below).
-
----
-
-## Building from source
+## Build from source
 
 ```
 dotnet build -c Debug
 ```
 
-Debug builds copy themselves to `%AppData%\XIVLauncher\devPlugins\Emptor\`.
-In game: Dalamud Settings → Experimental → rescan dev plugins, then enable
-**Emptor** in `/xlplugins`.
+Debug builds copy themselves to `%AppData%\XIVLauncher\devPlugins\Emptor\`; in
+game, Dalamud Settings → Experimental → rescan dev plugins, then enable **Emptor**.
+Needs the .NET 10 SDK and the XIVLauncher/Dalamud dev libraries at
+`%AppData%\XIVLauncher\addon\Hooks\dev`.
 
-Requires the XIVLauncher/Dalamud dev libraries at
-`%AppData%\XIVLauncher\addon\Hooks\dev` and the .NET 10 SDK. Releases are built
-by [`.github/workflows/build.yml`](.github/workflows/build.yml): publish a
-GitHub Release and it packages `Emptor.zip`, attaches it, and refreshes
-`pluginmaster.json`.
+Releases: publish a GitHub Release (tag `vX.Y.Z`). CI
+([`.github/workflows/build.yml`](.github/workflows/build.yml)) builds it and
+attaches `Emptor.zip` + `Emptor.json`; the
+[DalamudPlugins](https://github.com/Evernow/DalamudPlugins) repo's sync job then
+picks up the new version.
 
 ## How buying works
 
 Per shopping-list item the runner:
 
 1. Dismounts, walks to the nearest **Market Board** object (via vnavmesh if it's
-   far), and interacts with it. You must be somewhere a Market Board is reachable
-   — a retainer / summoning bell is not enough.
+   far), and interacts with it. A retainer / summoning bell is not enough.
 2. Focuses the search box and types the item name with real keystrokes, then
    presses Enter. (Nothing else triggers the client's search.)
 3. Clicks the item in the results to open its listings.
-4. Reads `InfoProxyItemSearch.Listings`, filters by quality and price ceiling,
-   sorts cheapest first.
-5. Buys whole listings cheapest-first (the marketboard sells whole stacks),
+4. Reads the listings, filters by quality and price ceiling, sorts cheapest
+   first.
+5. Buys whole listings cheapest-first (the market board sells whole stacks),
    confirming the "Purchase for X gil?" dialog, until the quantity is met.
 6. Records what it bought, the total gil, and the next-cheapest listing it did
    **not** buy.
 
-Every step has a human-variable delay (see `HumanTiming` / `TypingModel`).
+Every step has a human-variable delay. Typing uses a per-keystroke model
+calibrated to the Dhakal et al. 2018 typing study (log-normal inter-key
+intervals, bigram effects, initiation latency). See `Buying/HumanTiming.cs` and
+`Buying/TypingModel.cs`.
 
 ### Overshoot
 
@@ -153,18 +151,9 @@ var orderId = JsonDocument.Parse(orderJson).RootElement.GetProperty("orderId").G
 var result = get.InvokeFunc(orderId);
 ```
 
-## Verification (do in order)
+## Status
 
-1. **Board opens** — `/emptor`, add a row, Start. Confirm the marketboard
-   window opens while standing at a Market Board.
-2. **Search + read** — add a row with `quantity 0` for a common item, Start.
-   The log should list every listing (price × qty). Compare with the game UI.
-3. **Single buy** — one cheap item, `quantity 1`, generous max price. Confirm one
-   purchase, gil drop, item in inventory, sane `nextLowest`.
-4. **Ceiling + multi-buy** — quantity needing 3–4 listings with a max price that
-   excludes the top ones. Confirm it stops at `priceExceeded` and paces between
-   buys.
-5. **Overshoot** — try each policy against big-stack-only listings.
-6. **IPC** — submit/poll/cancel from `/xldev` IPC tester or a scratch plugin.
-7. **Safety** — mount mid-run → `blocked`; disable the plugin mid-run → no stray
-   dialogs left open.
+Core buy loop works end to end on retail. Rough edges remain (multi-item /
+quantity > 1 paths, timing calibration). Behaviour is recorded to
+`%AppData%\XIVLauncher\pluginConfigs\Emptor\captures\` when "Capture" is enabled,
+for tuning the human emulation.
