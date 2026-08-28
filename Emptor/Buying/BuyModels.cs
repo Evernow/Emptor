@@ -80,6 +80,13 @@ public sealed class BuyRequest
     /// <summary>Optional cap on total gil spent across the whole order. 0 = no cap.</summary>
     public long TotalGilBudget { get; set; }
 
+    /// <summary>
+    /// The caller has already positioned the character at a Market Board (e.g. via
+    /// Lifestream). Emptor won't pathfind — it just interacts with a board that is
+    /// already in range (or an already-open board) and fails fast otherwise.
+    /// </summary>
+    public bool SkipTravel { get; set; }
+
     public List<BuyRequestItem> Items { get; set; } = new();
 }
 

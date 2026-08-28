@@ -325,6 +325,12 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
+                if (order!.Request.SkipTravel)
+                {
+                    StopItem(StopReason.OpenFailed, $"Nearest Market Board is {dist:0}y away and the caller asked Emptor not to travel.");
+                    return;
+                }
+
                 if (Plugin.Instance.Configuration.UseNavigation && Navigation.Available && Navigation.IsReady())
                 {
                     Navigation.MoveCloseTo(board.Position, 3.4f);

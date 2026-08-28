@@ -15,7 +15,8 @@ namespace Emptor.Ipc;
 /// </summary>
 public sealed class EmptorIpc : IDisposable
 {
-    public const int Version = 1;
+    // v2: request accepts "skipTravel".
+    public const int Version = 2;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -96,6 +97,7 @@ public sealed class EmptorIpc : IDisposable
         {
             ClientRequestId = dto.ClientRequestId,
             TotalGilBudget = dto.TotalGilBudget ?? 0,
+            SkipTravel = dto.SkipTravel ?? false,
         };
 
         foreach (var i in dto.Items)
@@ -199,6 +201,7 @@ public sealed class EmptorIpc : IDisposable
     {
         public string? ClientRequestId { get; set; }
         public long? TotalGilBudget { get; set; }
+        public bool? SkipTravel { get; set; }
         public List<RequestItemDto>? Items { get; set; }
     }
 

@@ -75,7 +75,7 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
 
 | Gate | Signature | Purpose |
 |---|---|---|
-| `Emptor.ApiVersion` | `Func<int>` | currently `1` |
+| `Emptor.ApiVersion` | `Func<int>` | currently `2` |
 | `Emptor.IsBusy` | `Func<bool>` | an order is running |
 | `Emptor.SubmitOrder` | `Func<string,string>` | request JSON → order JSON (queued) |
 | `Emptor.GetOrder` | `Func<string,string>` | orderId → order JSON (live) |
@@ -88,6 +88,7 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
 {
   "clientRequestId": "optional",
   "totalGilBudget": 5000000,
+  "skipTravel": false,
   "items": [{
     "itemId": 44096,
     "itemName": "Grade 8 Tincture of Strength",
@@ -105,6 +106,14 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
 - `overshoot`: `"allow"` (default) | `"skip"` | `"limit"`.
 - `quantity: 0` → **discovery only**: no purchases, but the result reports the
   full ranked listing set in `availableListings` plus `nextLowest*`.
+- `skipTravel: true` → the caller has already put the character at a Market Board
+  (e.g. via Lifestream `/li mb`). Emptor won't pathfind — it interacts with a
+  board already in range and stops with `openFailed` otherwise.
+
+The three stop conditions a caller usually cares about map directly onto the
+request: **max count** = `quantity`, **max total gil** = `totalGilBudget`, **max
+price each** = `maxUnitPrice`. The result's `stoppedReason` says which one
+triggered, and `nextLowestUnitPrice` is what the next unit would have cost.
 
 ### Order result
 
