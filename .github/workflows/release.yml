@@ -89,3 +89,42 @@ jobs:
           files: |
             Emptor.zip
             Emptor.json
+
+      # Optional: push the version straight into Evernow/DalamudPlugins so the
+      # plugin is installable immediately. Needs a PAT with contents:write on that
+      # repo, stored as the PLUGINMASTER_TOKEN secret. Without it, this no-ops and
+      # the DalamudPlugins hourly sync job picks the release up instead.
+      - name: Update pluginmaster.json in DalamudPlugins
+        env:
+          PM_TOKEN: ${{ secrets.PLUGINMASTER_TOKEN }}
+          TAG: ${{ steps.bump.outputs.tag }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        shell: pwsh
+        run: |
+          if (-not $env:PM_TOKEN) { Write-Host "No PLUGINMASTER_TOKEN secret - skipping (DalamudPlugins sync job will catch up)"; exit 0 }
+
+          $manifest = Get-Content Emptor/bin/Release/Emptor/Emptor.json -Raw | ConvertFrom-Json
+          $apiLevel = $manifest.DalamudApiLevel
+
+          git clone --depth 1 "https://x-access-token:$($env:PM_TOKEN)@github.com/Evernow/DalamudPlugins.git" pm
+          cd pm
+          $master = Get-Content pluginmaster.json -Raw | ConvertFrom-Json
+          $entry = $master | Where-Object { $_.InternalName -eq 'Emptor' }
+          $dl = "https://github.com/Evernow/Emptor/releases/download/$($env:TAG)/Emptor.zip"
+          $entry.AssemblyVersion        = $env:VERSION
+          $entry.TestingAssemblyVersion = $env:VERSION
+          $entry.DalamudApiLevel        = $apiLevel
+          $entry.ApplicableVersion      = "any"
+          $entry.LastUpdate             = [int][double]::Parse((Get-Date -UFormat %s))
+          $entry.DownloadLinkInstall    = $dl
+          $entry.DownloadLinkUpdate     = $dl
+          $entry.DownloadLinkTesting    = $dl
+          $master | ConvertTo-Json -Depth 10 | Set-Content pluginmaster.json -Encoding UTF8
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pluginmaster.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { Write-Host "pluginmaster.json already current"; exit 0 }
+          git commit -m "Emptor $($env:VERSION)"
+          git push
