@@ -108,8 +108,10 @@ jobs:
 
           git clone --depth 1 "https://x-access-token:$($env:PM_TOKEN)@github.com/Evernow/DalamudPlugins.git" pm
           cd pm
-          $master = Get-Content pluginmaster.json -Raw | ConvertFrom-Json
+          # @(...) normalises to an array whether ConvertFrom-Json returned one object or many.
+          $master = @(Get-Content pluginmaster.json -Raw | ConvertFrom-Json)
           $entry = $master | Where-Object { $_.InternalName -eq 'Emptor' }
+          if (-not $entry) { throw "pluginmaster.json has no Emptor entry" }
           $dl = "https://github.com/Evernow/Emptor/releases/download/$($env:TAG)/Emptor.zip"
           $entry.AssemblyVersion        = $env:VERSION
           $entry.TestingAssemblyVersion = $env:VERSION
@@ -119,8 +121,9 @@ jobs:
           $entry.DownloadLinkInstall    = $dl
           $entry.DownloadLinkUpdate     = $dl
           $entry.DownloadLinkTesting    = $dl
-          # -AsArray: a one-plugin repo is still a JSON array, not a bare object
-          ConvertTo-Json -InputObject @($master) -Depth 10 -AsArray | Set-Content pluginmaster.json -Encoding UTF8
+          # Pipe form + -AsArray: enumerates the collection and re-wraps exactly once.
+          # (ConvertTo-Json -InputObject <array> -AsArray double-wraps to [[...]].)
+          $master | ConvertTo-Json -Depth 10 -AsArray | Set-Content pluginmaster.json -Encoding UTF8
 
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
