@@ -122,11 +122,25 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
   Emptor won't pathfind or travel — it interacts with a board already in range
   and stops with `openFailed` otherwise.
 - `city` (optional) → pin travel to one city's Market Board instead of the `/li mb`
-  default (Ul'dah). Value is a key or name; `Emptor.GetCities` lists them. Known:
-  `uldah`, `limsa`, `gridania`, `ishgard` (Foundation), `kugane`, `crystarium`,
-  `sharlayan` (Old Sharlayan), `tuliyollal`. Market Board listings are world-wide
-  identical, so this only chooses **where Emptor travels** — a board already in
-  reach is used as-is, and it is ignored when `skipTravel` is set.
+  default (Ul'dah). Accepts the key or the display name (case-insensitive), e.g.
+  `"kugane"` or `"Kugane"`. Market Board listings are world-wide identical, so this
+  only chooses **where Emptor travels** — a board already in reach is used as-is,
+  and it is ignored when `skipTravel` is set. Valid values:
+
+  | `city` key | Board | How Emptor travels there |
+  |---|---|---|
+  | `uldah` (default) | Ul'dah — Sapphire Avenue Exchange | Lifestream `/li mb` |
+  | `limsa` | Limsa Lominsa | teleport to Limsa Lominsa Lower Decks, walk |
+  | `gridania` | Old Gridania | teleport to New Gridania → aethernet to Leatherworkers' Guild & Shaded Bower |
+  | `ishgard` | Foundation | teleport to Foundation → aethernet to The Jeweled Crozier |
+  | `kugane` | Kugane | teleport to Kugane → aethernet to Kogane Dori Markets |
+  | `crystarium` | The Crystarium | teleport to The Crystarium → aethernet to Musica Universalis Markets |
+  | `sharlayan` | Old Sharlayan | teleport to Old Sharlayan, walk |
+  | `tuliyollal` | Tuliyollal | teleport to Tuliyollal → aethernet to Bayside Bevy Marketplace |
+
+  `Emptor.GetCities` returns this list as JSON: `[{ "key": "kugane", "display":
+  "Kugane", "route": "AethernetHop" }, …]` where `route` is `LiMarketBoard`,
+  `Teleport`, or `AethernetHop`.
 
 The three stop conditions a caller usually cares about map directly onto the
 request: **max count** = `quantity`, **max total gil** = `totalGilBudget`, **max
