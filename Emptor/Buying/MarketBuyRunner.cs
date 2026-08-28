@@ -285,7 +285,12 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
-                if (MarketBoardUi.IsBoardOpen())
+                // Skip straight to searching ONLY if the board is open AND we can
+                // see a real Market Board object right next to us (e.g. a
+                // multi-item order where item 1 already opened it). A stale board
+                // window with no board nearby is NOT good enough — go locate one.
+                if (MarketBoardUi.IsBoardOpen() &&
+                    MarketBoardLocator.FindNearest(MarketBoardLocator.InteractDistance + 1.5f) is not null)
                 {
                     ThinkThen(HumanTiming.OrientAfterOpen(), Phase.PrepSearch, "orient");
                     return;
@@ -331,6 +336,14 @@ public sealed class MarketBuyRunner : IDisposable
                 var dist = MarketBoardLocator.DistanceTo(board) ?? 999f;
                 if (dist <= MarketBoardLocator.InteractDistance)
                 {
+                    // Standing at a real board. If its window is already up (a
+                    // multi-item order), don't re-interact — that can toggle it
+                    // shut. Otherwise interact to open it.
+                    if (MarketBoardUi.IsBoardOpen())
+                    {
+                        ThinkThen(HumanTiming.OrientAfterOpen(), Phase.PrepSearch, "orient");
+                        return;
+                    }
                     boardApproachStartPos = GameState.PlayerPosition();
                     ThinkThen(HumanTiming.BeforeInteractBoard(), Phase.InteractBoard, "before-interact");
                     return;
