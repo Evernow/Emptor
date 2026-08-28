@@ -60,7 +60,7 @@ public sealed class Plugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the Emptor window.",
+            HelpMessage = "Open the Emptor window. \"/emptor pos\" prints your position + the nearest Market Board.",
         });
 
         PluginInterface.UiBuilder.Draw += windowSystem.Draw;
@@ -70,7 +70,16 @@ public sealed class Plugin : IDalamudPlugin
         Log.Information("[Emptor] Loaded. Use /emptor.");
     }
 
-    private void OnCommand(string command, string args) => OpenMainUi();
+    private void OnCommand(string command, string args)
+    {
+        var a = args.Trim();
+        if (a.Equals("pos", StringComparison.OrdinalIgnoreCase) || a.Equals("where", StringComparison.OrdinalIgnoreCase))
+        {
+            GameData.MarketBoardLocator.EchoHere();
+            return;
+        }
+        OpenMainUi();
+    }
 
     private void OpenMainUi() => configWindow.Toggle();
 

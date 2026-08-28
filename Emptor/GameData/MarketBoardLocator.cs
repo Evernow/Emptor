@@ -14,8 +14,12 @@ public static class MarketBoardLocator
     /// <summary>How close counts as "at the board" (real 3D distance).</summary>
     public const float InteractDistance = 4.2f;
 
-    /// <summary>How far Emptor will walk to a board when travel is allowed.</summary>
-    public const float NavigateSearchRadius = 60f;
+    /// <summary>
+    /// How far away a board object may be and still be walked to. Cities stream
+    /// most event objects in at once, so a landing spot on the far side of the
+    /// zone from the board is still fine — vnavmesh does the walk.
+    /// </summary>
+    public const float NavigateSearchRadius = 200f;
 
     /// <summary>
     /// Nearest targetable "Market Board" object within <paramref name="maxRange"/>
@@ -52,6 +56,38 @@ public static class MarketBoardLocator
         // falsely reject an in-range interaction (per MarketMafioso).
         ts->InteractWithObject((ClientGameObject*)board.Address, false);
         return true;
+    }
+
+    /// <summary>
+    /// `/emptor pos` — print the current territory, player position and the
+    /// nearest loaded Market Board object, so board anchor points can be
+    /// collected by walking to each one.
+    /// </summary>
+    public static void EchoHere()
+    {
+        var me = Plugin.ObjectTable.LocalPlayer;
+        if (me is null)
+        {
+            Plugin.ChatGui.Print("[Emptor] Not logged in.");
+            return;
+        }
+
+        var p = me.Position;
+        var msg = $"[Emptor] territory {Plugin.ClientState.TerritoryType}  you=({p.X:0.00}, {p.Y:0.00}, {p.Z:0.00})";
+
+        var board = FindNearest(500f);
+        if (board is not null)
+        {
+            var b = board.Position;
+            msg += $"  |  board \"{board.Name.TextValue}\"=({b.X:0.00}, {b.Y:0.00}, {b.Z:0.00}) {Vector3.Distance(p, b):0}y away";
+        }
+        else
+        {
+            msg += "  |  no Market Board object loaded within 500y";
+        }
+
+        Plugin.ChatGui.Print(msg);
+        Plugin.Log.Information(msg);
     }
 
     private static bool IsMarketBoard(IGameObject o)

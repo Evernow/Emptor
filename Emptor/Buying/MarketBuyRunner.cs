@@ -34,7 +34,7 @@ public sealed class MarketBuyRunner : IDisposable
     private enum Phase
     {
         Idle, ItemNext, ItemBegin, BlockedWait,
-        Dismount, LocateBoard, TravelToBoard, TravelWait, NavigateBoard, InteractBoard, BoardOpenWait,
+        Dismount, LocateBoard, TravelToBoard, TravelWait, ApproachAnchor, NavigateBoard, InteractBoard, BoardOpenWait,
         Think,
         PrepSearch, TypeSearch, SubmitSearch, SearchWait,
         OpenListings, ClickResultRow, ListingsWait, Read,
@@ -42,7 +42,7 @@ public sealed class MarketBuyRunner : IDisposable
     }
 
     private static readonly TimeSpan BoardOpenTimeout = TimeSpan.FromSeconds(8);
-    private static readonly TimeSpan NavigateTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan NavigateTimeout = TimeSpan.FromSeconds(120);
     private static readonly TimeSpan DismountTimeout = TimeSpan.FromSeconds(6);
     private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(14);
     private static readonly TimeSpan ListingsTimeout = TimeSpan.FromSeconds(15);
@@ -87,6 +87,7 @@ public sealed class MarketBuyRunner : IDisposable
     private Vector3 travelLastPos;
     private DateTime travelLastSignalUtc;
     private DateTime travelArrivedUtc;
+    private Vector3 anchorTarget;
 
     // per-item working state
     private int itemIndex;
@@ -151,6 +152,7 @@ public sealed class MarketBuyRunner : IDisposable
         Phase.LocateBoard => "Looking for a Market Board…",
         Phase.TravelToBoard => travelDestLabel is null ? "Heading to a Market Board…" : $"Heading to {travelDestLabel}…",
         Phase.TravelWait => travelDestLabel is null ? "Travelling to a Market Board…" : $"Travelling to {travelDestLabel}…",
+        Phase.ApproachAnchor => "Walking to the Market Board area…",
         Phase.NavigateBoard => "Walking to the Market Board…",
         Phase.InteractBoard => "Opening the Market Board…",
         Phase.BoardOpenWait => "Waiting for the Market Board window…",
@@ -487,18 +489,34 @@ public sealed class MarketBuyRunner : IDisposable
                     travelLastSignalUtc = DateTime.UtcNow;
 
                 // Clearly arrived: zone changed, not zoning, Lifestream idle.
-                // Give the board object a few seconds to stream in, then fail.
+                // Give the board object a few seconds to stream in.
                 if (zoned && !GameState.IsBetweenAreas && !Lifestream.IsBusy())
                 {
                     if (travelArrivedUtc == default)
                         travelArrivedUtc = DateTime.UtcNow;
-                    if (DateTime.UtcNow - travelArrivedUtc > TravelArriveSettle)
+                    if (DateTime.UtcNow - travelArrivedUtc <= TravelArriveSettle)
+                        return;
+
+                    lifestreamTravelActive = false;
+
+                    // Still nothing loaded — if we have a known board spot for this
+                    // city and can walk, head there and let it stream in.
+                    var city = MarketCities.Resolve(order!.Request.City);
+                    if (city?.Anchor is { } anchor
+                        && GameState.TerritoryId == city.AnchorTerritory
+                        && Plugin.Instance.Configuration.UseNavigation
+                        && Navigation.Available && Navigation.IsReady())
                     {
-                        lifestreamTravelActive = false;
-                        StopItem(StopReason.TravelFailed,
-                            $"Reached {travelDestLabel ?? "the destination"} but no Market Board is in reach — "
-                            + "the route may need an aethernet hop, or vnavmesh isn't ready.");
+                        anchorTarget = anchor;
+                        Navigation.MoveCloseTo(anchor, 6f);
+                        Log?.Invoke($"No board object at the landing spot — walking to the known {city.Display} board area.");
+                        Goto(Phase.ApproachAnchor);
+                        return;
                     }
+
+                    StopItem(StopReason.TravelFailed,
+                        $"Reached {travelDestLabel ?? "the destination"} but no Market Board is in reach — "
+                        + "the landing spot is too far from the board (needs a board anchor), or vnavmesh isn't ready.");
                     return;
                 }
                 travelArrivedUtc = default;
@@ -512,6 +530,40 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
+                return;
+            }
+
+            case Phase.ApproachAnchor:
+            {
+                if (CancelledNow())
+                {
+                    Navigation.Stop();
+                    StopItem(StopReason.Cancelled, "Cancelled while walking to the board.");
+                    return;
+                }
+
+                // Board streamed in while walking — hand to LocateBoard.
+                if (MarketBoardLocator.FindNearest(MarketBoardLocator.NavigateSearchRadius) is not null)
+                {
+                    Navigation.Stop();
+                    Goto(Phase.LocateBoard);
+                    return;
+                }
+
+                var d = Vector3.Distance(GameState.PlayerPosition(), anchorTarget);
+                if (d <= 8f || (!Navigation.IsRunning() && Elapsed > TimeSpan.FromSeconds(4)))
+                {
+                    Navigation.Stop();
+                    StopItem(StopReason.TravelFailed,
+                        $"Walked to the {travelDestLabel ?? "city"} Market Board spot but no board object appeared — the anchor may be wrong.");
+                    return;
+                }
+                if (Elapsed > NavigateTimeout)
+                {
+                    Navigation.Stop();
+                    StopItem(StopReason.TravelFailed, "Timed out walking to the Market Board.");
+                    return;
+                }
                 return;
             }
 

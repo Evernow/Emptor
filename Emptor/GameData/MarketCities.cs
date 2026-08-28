@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 
 namespace Emptor.GameData;
 
@@ -26,15 +27,34 @@ public sealed record MarketCity(
     string Display,
     CityRouteKind RouteKind,
     string LifestreamArg,
-    string[] Aliases);
+    string[] Aliases,
+    uint AnchorTerritory = 0,
+    float AnchorX = 0f,
+    float AnchorY = 0f,
+    float AnchorZ = 0f)
+{
+    /// <summary>
+    /// A point ~next to the board, in the arrival territory. Used only as a
+    /// fallback: after Lifestream travel, if no board object is loaded near the
+    /// landing spot, Emptor walks here and the board streams in. Zero = none.
+    /// </summary>
+    public Vector3? Anchor =>
+        AnchorTerritory == 0 || (AnchorX == 0f && AnchorY == 0f && AnchorZ == 0f)
+            ? null
+            : new Vector3(AnchorX, AnchorY, AnchorZ);
+}
 
 /// <summary>
 /// The cities a caller may pin an order to ("only visit Kugane for this purchase").
 /// Market Board listings are world-wide identical, so the city only decides where
-/// Emptor <em>travels</em> — never which listings it sees.
+/// Emptor travels — never which listings it sees.
 /// </summary>
 public static class MarketCities
 {
+    // Anchor points (territory + XYZ) are left at 0 until captured in-game with
+    // "/emptor pos" while standing at each board. NavigateSearchRadius (200y)
+    // already covers most landing spots; the anchor is the fallback for the few
+    // large zones where the board object isn't streamed in at the landing spot.
     public static readonly IReadOnlyList<MarketCity> All = new[]
     {
         new MarketCity("uldah", "Ul'dah", CityRouteKind.LiMarketBoard, "mb",
