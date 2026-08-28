@@ -46,8 +46,8 @@ Per shopping-list item the runner:
 1. Dismounts, finds a real **Market Board** object and interacts with it. If none
    is in range it will, when travel is allowed:
    - walk to one within ~60 y with **vnavmesh**, and/or
-   - ride **Lifestream** `/li mb` to the board in the current city (retail cities
-     only; the caller still chooses the world),
+   - use **Lifestream** to travel to a board — `/li mb` (Ul'dah) by default, or a
+     specific city's board when the request pins one (see `city` below),
    then interact. It never opens the board UI "cold" — if it still can't reach a
    real board the order stops (`noBoardInZone` / `travelFailed`). With
    `skipTravel: true` it skips all of that and only uses a board it is already
@@ -82,8 +82,9 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
 
 | Gate | Signature | Purpose |
 |---|---|---|
-| `Emptor.ApiVersion` | `Func<int>` | currently `3` |
+| `Emptor.ApiVersion` | `Func<int>` | currently `4` |
 | `Emptor.IsBusy` | `Func<bool>` | an order is running |
+| `Emptor.GetCities` | `Func<string>` | JSON array of `{key, display, route}` — valid `city` values |
 | `Emptor.SubmitOrder` | `Func<string,string>` | request JSON → order JSON (queued) |
 | `Emptor.GetOrder` | `Func<string,string>` | orderId → order JSON (live) |
 | `Emptor.CancelOrder` | `Func<string,bool>` | request stop |
@@ -96,6 +97,7 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
   "clientRequestId": "optional",
   "totalGilBudget": 5000000,
   "skipTravel": false,
+  "city": "kugane",
   "items": [{
     "itemId": 44096,
     "itemName": "Grade 8 Tincture of Strength",
@@ -114,11 +116,17 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
 - `quantity: 0` → **discovery only**: no purchases, but the result reports the
   full ranked listing set in `availableListings` plus `nextLowest*`.
 - `skipTravel` omitted / `false` (default) → Emptor gets itself to a board:
-  vnavmesh walk for one nearby, else Lifestream `/li mb` for one in the current
-  city. Choosing the world / data centre is still the caller's job.
+  vnavmesh walk for one nearby, else Lifestream travel. Choosing the world / data
+  centre is still the caller's job.
 - `skipTravel: true` → the caller has already put the character at a Market Board.
   Emptor won't pathfind or travel — it interacts with a board already in range
   and stops with `openFailed` otherwise.
+- `city` (optional) → pin travel to one city's Market Board instead of the `/li mb`
+  default (Ul'dah). Value is a key or name; `Emptor.GetCities` lists them. Known:
+  `uldah`, `limsa`, `gridania`, `ishgard` (Foundation), `kugane`, `crystarium`,
+  `sharlayan` (Old Sharlayan), `tuliyollal`. Market Board listings are world-wide
+  identical, so this only chooses **where Emptor travels** — a board already in
+  reach is used as-is, and it is ignored when `skipTravel` is set.
 
 The three stop conditions a caller usually cares about map directly onto the
 request: **max count** = `quantity`, **max total gil** = `totalGilBudget`, **max
@@ -132,6 +140,7 @@ triggered, and `nextLowestUnitPrice` is what the next unit would have cost.
   "orderId": "…",
   "state": "queued|running|completed|cancelled|rejected|failed",
   "message": "…",
+  "city": "kugane",
   "totalGilSpent": 1750000,
   "items": [{
     "itemId": 44096,

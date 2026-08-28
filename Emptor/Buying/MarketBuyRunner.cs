@@ -51,7 +51,7 @@ public sealed class MarketBuyRunner : IDisposable
     private static readonly TimeSpan BlockedTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan LifestreamTravelTimeout = TimeSpan.FromSeconds(120);
     private static readonly TimeSpan LifestreamStartGrace = TimeSpan.FromSeconds(4);
-    private static readonly TimeSpan LifestreamSettle = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan LifestreamDoneGrace = TimeSpan.FromSeconds(8);
 
     private readonly PurchaseConfirmationWatcher watcher = new();
     private readonly BehaviorRecorder recorder;
@@ -75,11 +75,12 @@ public sealed class MarketBuyRunner : IDisposable
     private int listingCountSeen;
     private DateTime listingCountChangedUtc;
 
-    // Lifestream "/li mb" travel to a board
+    // Lifestream "/li ..." travel to a board
     private bool triedLifestreamThisItem;
     private bool lifestreamTravelActive;
     private bool liSawBusy;
-    private DateTime liIdleSinceUtc;
+    private DateTime liLastBusyUtc;
+    private string? travelDestLabel;
 
     // per-item working state
     private int itemIndex;
@@ -142,8 +143,8 @@ public sealed class MarketBuyRunner : IDisposable
         Phase.BlockedWait => $"Waiting — {GameState.GetBlockReason() ?? "blocked"}",
         Phase.Dismount => "Dismounting…",
         Phase.LocateBoard => "Looking for a Market Board…",
-        Phase.TravelToBoard => "Heading to a Market Board (“/li mb”)…",
-        Phase.TravelWait => "Travelling to a Market Board…",
+        Phase.TravelToBoard => travelDestLabel is null ? "Heading to a Market Board…" : $"Heading to {travelDestLabel}…",
+        Phase.TravelWait => travelDestLabel is null ? "Travelling to a Market Board…" : $"Travelling to {travelDestLabel}…",
         Phase.NavigateBoard => "Walking to the Market Board…",
         Phase.InteractBoard => "Opening the Market Board…",
         Phase.BoardOpenWait => "Waiting for the Market Board window…",
@@ -207,6 +208,7 @@ public sealed class MarketBuyRunner : IDisposable
         itemIndex = -1;
         boughtListingIds.Clear();
         lifestreamTravelActive = false;
+        travelDestLabel = null;
         Goto(Phase.ItemNext);
 
         startedCaptureForThisOrder = false;
@@ -343,8 +345,8 @@ public sealed class MarketBuyRunner : IDisposable
                 if (board is null)
                 {
                     // Nothing in range. If travel is allowed and Lifestream is
-                    // here, ride "/li mb" to the city's board, then come back
-                    // through LocateBoard to interact with it.
+                    // here, ride it to the (optionally pinned) city's board, then
+                    // come back through LocateBoard to interact with it.
                     if (!skip
                         && !triedLifestreamThisItem
                         && Plugin.Instance.Configuration.UseLifestreamTravel
@@ -359,7 +361,7 @@ public sealed class MarketBuyRunner : IDisposable
                         : triedLifestreamThisItem ? StopReason.TravelFailed
                         : StopReason.NoBoardInZone,
                         skip ? "Not standing at a Market Board (the caller disabled travel)."
-                        : triedLifestreamThisItem ? "Lifestream (\"/li mb\") did not reach a Market Board."
+                        : triedLifestreamThisItem ? "Lifestream did not reach a Market Board."
                         : Lifestream.Available ? "No Market Board nearby."
                         : "No Market Board nearby — install Lifestream or walk to one.");
                     return;
@@ -403,6 +405,15 @@ public sealed class MarketBuyRunner : IDisposable
             {
                 if (CancelledNow()) { StopItem(StopReason.Cancelled, "Cancelled before travelling."); return; }
 
+                var wanted = order!.Request.City;
+                var city = MarketCities.Resolve(wanted);
+                if (!string.IsNullOrWhiteSpace(wanted) && city is null)
+                {
+                    StopItem(StopReason.TravelFailed,
+                        $"Unknown city \"{wanted}\" — known: {MarketCities.KnownKeys()}.");
+                    return;
+                }
+
                 // Let any prior Lifestream action (e.g. the caller's world hop)
                 // wind down before we issue our own command.
                 if (Lifestream.IsBusy())
@@ -412,17 +423,21 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
-                if (!Lifestream.GoToMarketBoard())
+                var arg = city?.LifestreamArg ?? "mb";
+                var dest = city is null ? "a Market Board (\"/li mb\")" : $"the {city.Display} Market Board";
+                travelDestLabel = city is null ? null : $"{city.Display}";
+
+                if (!Lifestream.RunLiCommand(arg))
                 {
-                    StopItem(StopReason.TravelFailed, "Could not dispatch \"/li mb\" (is Lifestream loaded?).");
+                    StopItem(StopReason.TravelFailed, $"Could not dispatch \"/li {arg}\" (is Lifestream loaded?).");
                     return;
                 }
 
                 triedLifestreamThisItem = true;
                 lifestreamTravelActive = true;
                 liSawBusy = false;
-                liIdleSinceUtc = default;
-                Log?.Invoke("No board nearby — travelling to one via \"/li mb\".");
+                liLastBusyUtc = DateTime.UtcNow;
+                Log?.Invoke($"No board nearby — travelling to {dest}.");
                 Goto(Phase.TravelWait);
                 return;
             }
@@ -437,6 +452,20 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
+                var busy = Lifestream.IsBusy();
+                if (busy)
+                    liLastBusyUtc = DateTime.UtcNow;
+                liSawBusy |= busy;
+
+                // Arrived within reach of a board — hand back to LocateBoard,
+                // which interacts or does a short vnav hop.
+                if (MarketBoardLocator.FindNearest(MarketBoardLocator.NavigateSearchRadius) is not null)
+                {
+                    lifestreamTravelActive = false;
+                    Goto(Phase.LocateBoard);
+                    return;
+                }
+
                 if (Elapsed > LifestreamTravelTimeout)
                 {
                     if (lifestreamTravelActive) Lifestream.Abort();
@@ -445,36 +474,24 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
-                if (Lifestream.IsBusy())
+                // Command never took.
+                if (!liSawBusy && Elapsed > LifestreamStartGrace)
                 {
-                    liSawBusy = true;
-                    liIdleSinceUtc = default;
-                    return;
-                }
-                if (GameState.IsBetweenAreas)
-                {
-                    liIdleSinceUtc = default;
+                    lifestreamTravelActive = false;
+                    StopItem(StopReason.TravelFailed, "Lifestream did not start travelling.");
                     return;
                 }
 
-                // Idle and not zoning. If Lifestream never went busy, give it a
-                // moment to pick the command up before concluding it did nothing.
-                if (!liSawBusy && Elapsed < LifestreamStartGrace)
-                    return;
-
-                if (liIdleSinceUtc == default)
-                    liIdleSinceUtc = DateTime.UtcNow;
-                if (DateTime.UtcNow - liIdleSinceUtc < LifestreamSettle)
-                    return;
-
-                lifestreamTravelActive = false;
-                if (MarketBoardLocator.FindNearest(MarketBoardLocator.NavigateSearchRadius) is not null)
+                // Lifestream ran and has been idle a while, but we're not near a
+                // board (bad route, or it dropped us short).
+                if (liSawBusy && !busy && !GameState.IsBetweenAreas
+                    && DateTime.UtcNow - liLastBusyUtc > LifestreamDoneGrace)
                 {
-                    Goto(Phase.LocateBoard); // interact, or a short vnav hop, from here
+                    lifestreamTravelActive = false;
+                    StopItem(StopReason.TravelFailed, "Lifestream finished travelling but no Market Board is in reach.");
                     return;
                 }
 
-                StopItem(StopReason.TravelFailed, "Lifestream (\"/li mb\") finished but no Market Board is nearby.");
                 return;
             }
 

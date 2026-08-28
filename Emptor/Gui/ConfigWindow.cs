@@ -163,6 +163,7 @@ public sealed class ConfigWindow : Window, IDisposable
             {
                 ClientRequestId = "ui",
                 TotalGilBudget = Config.TotalGilBudget,
+                City = string.IsNullOrWhiteSpace(Config.PreferredCity) ? null : Config.PreferredCity,
                 Items = Config.ShoppingList
                     .Where(r => r.Enabled && r.Quantity > 0 && r.ItemId != 0)
                     .Select(r => r.ToRequestItem())
@@ -195,6 +196,22 @@ public sealed class ConfigWindow : Window, IDisposable
             ImGui.TextColored(
                 ok ? new Vector4(0.4f, 0.85f, 0.4f, 1f) : new Vector4(0.85f, 0.5f, 0.4f, 1f),
                 ok ? "Lifestream ready" : "Lifestream not loaded");
+
+            ImGui.SetNextItemWidth(200);
+            var cities = MarketCities.All;
+            var names = new string[cities.Count + 1];
+            names[0] = "Auto (Ul'dah / nearest)";
+            for (var i = 0; i < cities.Count; i++)
+                names[i + 1] = cities[i].Display;
+            var sel = 0;
+            for (var i = 0; i < cities.Count; i++)
+                if (string.Equals(cities[i].Key, Config.PreferredCity, StringComparison.OrdinalIgnoreCase))
+                    sel = i + 1;
+            if (Combo("Travel to##city", names, ref sel))
+            {
+                Config.PreferredCity = sel == 0 ? string.Empty : cities[sel - 1].Key;
+                Config.Save();
+            }
         }
     }
 

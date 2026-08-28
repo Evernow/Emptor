@@ -93,6 +93,15 @@ public sealed class BuyRequest
     /// </summary>
     public bool SkipTravel { get; set; }
 
+    /// <summary>
+    /// Restrict travel to this city's Market Board — a key or name from
+    /// <see cref="Emptor.GameData.MarketCities"/> (e.g. "kugane", "gridania").
+    /// Null / empty = Emptor's default ("/li mb", i.e. Ul'dah). Listings are
+    /// world-wide identical, so this only chooses where Emptor travels; a board
+    /// already in reach is used as-is. Ignored when <see cref="SkipTravel"/>.
+    /// </summary>
+    public string? City { get; set; }
+
     public List<BuyRequestItem> Items { get; set; } = new();
 }
 

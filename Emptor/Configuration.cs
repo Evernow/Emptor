@@ -64,6 +64,12 @@ public sealed class Configuration : IPluginConfiguration
     /// </summary>
     public bool UseLifestreamTravel { get; set; } = true;
 
+    /// <summary>
+    /// Which city's Market Board a config-window run travels to. Empty = default
+    /// ("/li mb", Ul'dah). A <see cref="Emptor.GameData.MarketCities"/> key.
+    /// </summary>
+    public string PreferredCity { get; set; } = string.Empty;
+
     /// <summary>Record every automated run to a capture file for later diffing.</summary>
     public bool CaptureAutomatedRuns { get; set; }
 

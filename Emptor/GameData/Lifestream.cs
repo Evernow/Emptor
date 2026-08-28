@@ -25,19 +25,23 @@ public static class Lifestream
     }
 
     /// <summary>
-    /// Fire <c>/li mb</c>. Returns false only if the command could not be
-    /// dispatched at all (Lifestream not registered). A person parking at a
-    /// board does exactly this.
+    /// Run <c>/li &lt;args&gt;</c> (e.g. <c>"mb"</c>, <c>"Kogane Dori"</c>,
+    /// <c>"tp Old Sharlayan"</c>). Returns false only if the command could not be
+    /// dispatched at all (Lifestream not registered). A person parking at a board
+    /// does exactly this.
     /// </summary>
-    public static bool GoToMarketBoard()
+    public static bool RunLiCommand(string args)
     {
-        try { return Plugin.CommandManager.ProcessCommand("/li mb"); }
+        try { return Plugin.CommandManager.ProcessCommand("/li " + args); }
         catch (Exception ex)
         {
-            Plugin.Log.Warning(ex, "[Emptor] \"/li mb\" dispatch failed.");
+            Plugin.Log.Warning(ex, $"[Emptor] \"/li {args}\" dispatch failed.");
             return false;
         }
     }
+
+    /// <summary>Fire <c>/li mb</c> — Lifestream's built-in "go to a Market Board" (Ul'dah).</summary>
+    public static bool GoToMarketBoard() => RunLiCommand("mb");
 
     /// <summary>Stop whatever Lifestream is doing (only used to undo a travel Emptor started).</summary>
     public static void Abort()

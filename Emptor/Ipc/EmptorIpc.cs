@@ -18,7 +18,8 @@ public sealed class EmptorIpc : IDisposable
     // v2: request accepts "skipTravel".
     // v3: with skipTravel omitted/false Emptor now travels to a board itself
     //     (vnavmesh walk, or Lifestream "/li mb" when no board is in the zone).
-    public const int Version = 3;
+    // v4: request accepts "city" (pin travel to one city's board); Emptor.GetCities.
+    public const int Version = 4;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -31,6 +32,7 @@ public sealed class EmptorIpc : IDisposable
 
     private readonly ICallGateProvider<int> apiVersion;
     private readonly ICallGateProvider<bool> isBusy;
+    private readonly ICallGateProvider<string> getCities;
     private readonly ICallGateProvider<string, string> submitOrder;
     private readonly ICallGateProvider<string, string> getOrder;
     private readonly ICallGateProvider<string, bool> cancelOrder;
@@ -43,6 +45,7 @@ public sealed class EmptorIpc : IDisposable
         var pi = Plugin.PluginInterface;
         apiVersion = pi.GetIpcProvider<int>("Emptor.ApiVersion");
         isBusy = pi.GetIpcProvider<bool>("Emptor.IsBusy");
+        getCities = pi.GetIpcProvider<string>("Emptor.GetCities");
         submitOrder = pi.GetIpcProvider<string, string>("Emptor.SubmitOrder");
         getOrder = pi.GetIpcProvider<string, string>("Emptor.GetOrder");
         cancelOrder = pi.GetIpcProvider<string, bool>("Emptor.CancelOrder");
@@ -50,6 +53,7 @@ public sealed class EmptorIpc : IDisposable
 
         apiVersion.RegisterFunc(() => Version);
         isBusy.RegisterFunc(() => queue.IsBusy);
+        getCities.RegisterFunc(GetCities);
         submitOrder.RegisterFunc(SubmitOrder);
         getOrder.RegisterFunc(GetOrder);
         cancelOrder.RegisterFunc(queue.Cancel);
@@ -61,6 +65,7 @@ public sealed class EmptorIpc : IDisposable
     {
         apiVersion.UnregisterFunc();
         isBusy.UnregisterFunc();
+        getCities.UnregisterFunc();
         submitOrder.UnregisterFunc();
         getOrder.UnregisterFunc();
         cancelOrder.UnregisterFunc();
@@ -95,11 +100,16 @@ public sealed class EmptorIpc : IDisposable
         if (dto?.Items is not { Count: > 0 })
             return Rejected("Request had no items.");
 
+        var city = GameData.MarketCities.Resolve(dto.City);
+        if (!string.IsNullOrWhiteSpace(dto.City) && city is null)
+            return Rejected($"Unknown city '{dto.City}'. Known: {GameData.MarketCities.KnownKeys()}.");
+
         var request = new BuyRequest
         {
             ClientRequestId = dto.ClientRequestId,
             TotalGilBudget = dto.TotalGilBudget ?? 0,
             SkipTravel = dto.SkipTravel ?? false,
+            City = city?.Key,
         };
 
         foreach (var i in dto.Items)
@@ -129,6 +139,16 @@ public sealed class EmptorIpc : IDisposable
         var order = queue.Submit(request, fromUi: false);
         return JsonSerializer.Serialize(ToDto(order), JsonOpts);
     }
+
+    private static string GetCities()
+        => JsonSerializer.Serialize(
+            GameData.MarketCities.All.Select(c => new CityDto
+            {
+                Key = c.Key,
+                Display = c.Display,
+                Route = c.RouteKind.ToString(),
+            }).ToList(),
+            JsonOpts);
 
     private string GetOrder(string orderId)
     {
@@ -163,6 +183,7 @@ public sealed class EmptorIpc : IDisposable
         ClientRequestId = o.ClientRequestId,
         State = o.State.ToString().ToLowerInvariant(),
         Message = o.Message,
+        City = o.Request.City,
         StartedUtc = o.StartedUtc,
         FinishedUtc = o.FinishedUtc,
         TotalGilSpent = o.TotalGilSpent,
@@ -204,7 +225,15 @@ public sealed class EmptorIpc : IDisposable
         public string? ClientRequestId { get; set; }
         public long? TotalGilBudget { get; set; }
         public bool? SkipTravel { get; set; }
+        public string? City { get; set; }
         public List<RequestItemDto>? Items { get; set; }
+    }
+
+    private sealed class CityDto
+    {
+        public string Key { get; set; } = string.Empty;
+        public string Display { get; set; } = string.Empty;
+        public string Route { get; set; } = string.Empty;
     }
 
     private sealed class RequestItemDto
@@ -224,6 +253,7 @@ public sealed class EmptorIpc : IDisposable
         public string? ClientRequestId { get; set; }
         public string State { get; set; } = string.Empty;
         public string Message { get; set; } = string.Empty;
+        public string? City { get; set; }
         public DateTime? StartedUtc { get; set; }
         public DateTime? FinishedUtc { get; set; }
         public long TotalGilSpent { get; set; }
