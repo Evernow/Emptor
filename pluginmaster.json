@@ -1,0 +1,21 @@
+[
+  {
+    "Name": "Emptor",
+    "InternalName": "Emptor",
+    "Author": "Evernow",
+    "Punchline": "Buys a shopping list off the market board.",
+    "Description": "Works a list of items, quantities and per-item price ceilings against the market board, buying the cheapest acceptable listings for you. Walks to a board, searches, and buys with human-variable timing. Exposes a Dalamud IPC API so other plugins can submit buy orders and read back what was purchased and at what price.",
+    "Tags": [ "market", "marketboard", "market board", "automation", "buy" ],
+    "RepoUrl": "https://github.com/Evernow/DalamudPlugins",
+    "ApplicableVersion": "any",
+    "DalamudApiLevel": 15,
+    "AssemblyVersion": "0.1.0.0",
+    "TestingAssemblyVersion": "0.1.0.0",
+    "IsTestingExclusive": false,
+    "DownloadCount": 0,
+    "LastUpdate": 0,
+    "DownloadLinkInstall": "https://github.com/Evernow/DalamudPlugins/releases/latest/download/Emptor.zip",
+    "DownloadLinkUpdate": "https://github.com/Evernow/DalamudPlugins/releases/latest/download/Emptor.zip",
+    "DownloadLinkTesting": "https://github.com/Evernow/DalamudPlugins/releases/latest/download/Emptor.zip"
+  }
+]

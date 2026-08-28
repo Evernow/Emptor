@@ -1,0 +1,79 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'Emptor/**'
+      - '.github/workflows/build.yml'
+      - 'scripts/**'
+  pull_request:
+    paths:
+      - 'Emptor/**'
+  release:
+    types: [ published ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download Dalamud
+        shell: pwsh
+        run: |
+          $branch = "latest"
+          Invoke-WebRequest -Uri "https://goatcorp.github.io/dalamud-distrib/$branch.zip" -OutFile dalamud.zip
+          $dest = "$env:AppData\XIVLauncher\addon\Hooks\dev"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Expand-Archive -Path dalamud.zip -DestinationPath $dest -Force
+
+      - name: Build
+        run: dotnet build Emptor/Emptor.csproj -c Release --nologo
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "Emptor/bin/Release/Emptor"
+          if (-not (Test-Path "$out/latest.zip")) { throw "DalamudPackager did not produce latest.zip" }
+          Copy-Item "$out/latest.zip" "Emptor.zip" -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Emptor
+          path: |
+            Emptor.zip
+            Emptor/bin/Release/Emptor/Emptor.json
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Emptor.zip
+
+      - name: Regenerate pluginmaster.json
+        if: github.event_name == 'release'
+        shell: pwsh
+        run: ./scripts/UpdatePluginMaster.ps1 -ManifestPath "Emptor/bin/Release/Emptor/Emptor.json"
+
+      - name: Commit pluginmaster.json
+        if: github.event_name == 'release'
+        shell: pwsh
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          git add pluginmaster.json
+          if (git diff --cached --quiet) { Write-Host "pluginmaster.json unchanged"; exit 0 }
+          git commit -m "Update pluginmaster.json for ${{ github.event.release.tag_name }}"
+          git push origin main

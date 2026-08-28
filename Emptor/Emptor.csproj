@@ -1,0 +1,31 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+
+  <PropertyGroup>
+    <Version>0.1.0.0</Version>
+    <Description>Automated market board buyer: works a shopping list of items / quantities / price ceilings, with a Dalamud IPC API.</Description>
+    <Authors>Evernow</Authors>
+    <PackageProjectUrl>https://github.com/Evernow/DalamudPlugins</PackageProjectUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ECommons" Version="3.2.1.15" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Emptor.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- On Debug builds, mirror the output into XIVLauncher's dev-plugin folder so
+       the game picks it up on the next "rescan dev plugins". -->
+  <Target Name="DeployToDevPlugins" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug' and '$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <DevPluginDir>$(AppData)\XIVLauncher\devPlugins\Emptor</DevPluginDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <DeployFiles Include="$(TargetDir)**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(DeployFiles)" DestinationFiles="@(DeployFiles->'$(DevPluginDir)\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Emptor deployed to $(DevPluginDir)" />
+  </Target>
+
+</Project>
