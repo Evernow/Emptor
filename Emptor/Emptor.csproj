@@ -4,7 +4,7 @@
     <Version>0.2.0.0</Version>
     <Description>Automated market board buyer: works a shopping list of items / quantities / price ceilings, with a Dalamud IPC API.</Description>
     <Authors>Evernow</Authors>
-    <PackageProjectUrl>https://github.com/Evernow/DalamudPlugins</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/Evernow/Emptor</PackageProjectUrl>
   </PropertyGroup>
 
   <ItemGroup>
