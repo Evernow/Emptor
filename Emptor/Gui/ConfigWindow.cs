@@ -182,6 +182,20 @@ public sealed class ConfigWindow : Window, IDisposable
         ImGui.SetNextItemWidth(160);
         var budget = (int)Math.Clamp(Config.TotalGilBudget, 0, int.MaxValue);
         if (ImGui.InputInt("Gil budget (0 = none)", ref budget, 0, 0)) { Config.TotalGilBudget = Math.Max(0, budget); Config.Save(); }
+
+        var useNav = Config.UseNavigation;
+        if (ImGui.Checkbox("Walk to a nearby board (vnavmesh)", ref useNav)) { Config.UseNavigation = useNav; Config.Save(); }
+        ImGui.SameLine();
+        var useLi = Config.UseLifestreamTravel;
+        if (ImGui.Checkbox("Travel to a board (Lifestream \"/li mb\")", ref useLi)) { Config.UseLifestreamTravel = useLi; Config.Save(); }
+        if (Config.UseLifestreamTravel)
+        {
+            ImGui.SameLine();
+            var ok = Lifestream.Available;
+            ImGui.TextColored(
+                ok ? new Vector4(0.4f, 0.85f, 0.4f, 1f) : new Vector4(0.85f, 0.5f, 0.4f, 1f),
+                ok ? "Lifestream ready" : "Lifestream not loaded");
+        }
     }
 
     private void DrawCapture()

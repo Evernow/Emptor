@@ -43,11 +43,15 @@ picks up the new version.
 
 Per shopping-list item the runner:
 
-1. Dismounts, finds a real **Market Board** object and interacts with it (walking
-   there with vnavmesh only when travel is allowed and one is within ~60 y). It
-   never opens the board UI "cold" — with no reachable Market Board the order
-   stops (`openFailed`) and the character does not move. With `skipTravel` it
-   only uses a board it is already standing at.
+1. Dismounts, finds a real **Market Board** object and interacts with it. If none
+   is in range it will, when travel is allowed:
+   - walk to one within ~60 y with **vnavmesh**, and/or
+   - ride **Lifestream** `/li mb` to the board in the current city (retail cities
+     only; the caller still chooses the world),
+   then interact. It never opens the board UI "cold" — if it still can't reach a
+   real board the order stops (`noBoardInZone` / `travelFailed`). With
+   `skipTravel: true` it skips all of that and only uses a board it is already
+   standing at (`openFailed` otherwise).
 2. Focuses the search box and types the item name with real keystrokes, then
    presses Enter. (Nothing else triggers the client's search.)
 3. Clicks the item in the results to open its listings.
@@ -78,7 +82,7 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
 
 | Gate | Signature | Purpose |
 |---|---|---|
-| `Emptor.ApiVersion` | `Func<int>` | currently `2` |
+| `Emptor.ApiVersion` | `Func<int>` | currently `3` |
 | `Emptor.IsBusy` | `Func<bool>` | an order is running |
 | `Emptor.SubmitOrder` | `Func<string,string>` | request JSON → order JSON (queued) |
 | `Emptor.GetOrder` | `Func<string,string>` | orderId → order JSON (live) |
@@ -109,9 +113,12 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
 - `overshoot`: `"allow"` (default) | `"skip"` | `"limit"`.
 - `quantity: 0` → **discovery only**: no purchases, but the result reports the
   full ranked listing set in `availableListings` plus `nextLowest*`.
-- `skipTravel: true` → the caller has already put the character at a Market Board
-  (e.g. via Lifestream `/li mb`). Emptor won't pathfind — it interacts with a
-  board already in range and stops with `openFailed` otherwise.
+- `skipTravel` omitted / `false` (default) → Emptor gets itself to a board:
+  vnavmesh walk for one nearby, else Lifestream `/li mb` for one in the current
+  city. Choosing the world / data centre is still the caller's job.
+- `skipTravel: true` → the caller has already put the character at a Market Board.
+  Emptor won't pathfind or travel — it interacts with a board already in range
+  and stops with `openFailed` otherwise.
 
 The three stop conditions a caller usually cares about map directly onto the
 request: **max count** = `quantity`, **max total gil** = `totalGilBudget`, **max
@@ -146,7 +153,7 @@ triggered, and `nextLowestUnitPrice` is what the next unit would have cost.
 
 `stoppedReason` ∈ `quantityMet | priceExceeded | noListings | budgetExceeded |
 overshoot | promptMismatch | blocked | cancelled | indeterminate | itemUnresolved
-| openFailed | searchFailed`.
+| openFailed | searchFailed | noBoardInZone | travelFailed`.
 
 ### Example caller
 

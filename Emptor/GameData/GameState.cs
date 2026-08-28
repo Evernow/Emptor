@@ -50,6 +50,10 @@ public static class GameState
     public static System.Numerics.Vector3 PlayerPosition()
         => Plugin.ObjectTable.LocalPlayer?.Position ?? default;
 
+    /// <summary>Zoning between areas (aetheryte teleport, world hop, city transition).</summary>
+    public static bool IsBetweenAreas
+        => Plugin.Condition[ConditionFlag.BetweenAreas] || Plugin.Condition[ConditionFlag.BetweenAreas51];
+
     public static unsafe bool IsAddonReady(string name)
     {
         var addon = Plugin.GameGui.GetAddonByName<AtkUnitBase>(name, 1);

@@ -51,6 +51,12 @@ public enum StopReason
     ItemUnresolved,
     OpenFailed,
     SearchFailed,
+
+    /// <summary>The current zone has no Market Board and none could be reached.</summary>
+    NoBoardInZone,
+
+    /// <summary>Lifestream travel to a Market Board was attempted but did not arrive.</summary>
+    TravelFailed,
 }
 
 /// <summary>One line of a buy request (from the config window or the IPC API).</summary>

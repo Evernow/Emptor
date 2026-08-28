@@ -58,6 +58,9 @@ public static class HumanTiming
     /// <summary>Walk up to / turn toward the board before interacting.</summary>
     public static TimeSpan BeforeInteractBoard() => Draw(560, 0.45, 220, 2300);
 
+    /// <summary>Realise there's no board here and decide to head to one.</summary>
+    public static TimeSpan DecideToTravel() => Draw(1000, 0.5, 400, 4500);
+
     // ---- internals -------------------------------------------------
 
     private static readonly Random Rng = new();

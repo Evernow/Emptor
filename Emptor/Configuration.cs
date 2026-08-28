@@ -57,6 +57,13 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Walk to the nearest Market Board with vnavmesh if it is not in interact range.</summary>
     public bool UseNavigation { get; set; } = true;
 
+    /// <summary>
+    /// When no Market Board is nearby and travel is not skipped, use Lifestream's
+    /// <c>/li mb</c> to reach one in the current city. Retail cities only; the
+    /// caller still chooses the world.
+    /// </summary>
+    public bool UseLifestreamTravel { get; set; } = true;
+
     /// <summary>Record every automated run to a capture file for later diffing.</summary>
     public bool CaptureAutomatedRuns { get; set; }
 

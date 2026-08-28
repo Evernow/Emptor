@@ -16,7 +16,9 @@ namespace Emptor.Ipc;
 public sealed class EmptorIpc : IDisposable
 {
     // v2: request accepts "skipTravel".
-    public const int Version = 2;
+    // v3: with skipTravel omitted/false Emptor now travels to a board itself
+    //     (vnavmesh walk, or Lifestream "/li mb" when no board is in the zone).
+    public const int Version = 3;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
