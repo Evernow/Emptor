@@ -54,6 +54,9 @@ public static class GameState
     public static bool IsBetweenAreas
         => Plugin.Condition[ConditionFlag.BetweenAreas] || Plugin.Condition[ConditionFlag.BetweenAreas51];
 
+    /// <summary>Current territory (zone) id. 0 when not in the world.</summary>
+    public static uint TerritoryId => Plugin.ClientState.TerritoryType;
+
     public static unsafe bool IsAddonReady(string name)
     {
         var addon = Plugin.GameGui.GetAddonByName<AtkUnitBase>(name, 1);

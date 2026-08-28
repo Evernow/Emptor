@@ -49,9 +49,13 @@ public sealed class MarketBuyRunner : IDisposable
     private static readonly TimeSpan ListingsStable = TimeSpan.FromMilliseconds(700);
     private static readonly TimeSpan ConfirmTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan BlockedTimeout = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan LifestreamTravelTimeout = TimeSpan.FromSeconds(120);
-    private static readonly TimeSpan LifestreamStartGrace = TimeSpan.FromSeconds(4);
-    private static readonly TimeSpan LifestreamDoneGrace = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan LifestreamTravelTimeout = TimeSpan.FromSeconds(150);
+    // How long with no travel signal at all (not busy, not zoning, same zone,
+    // not moving) before we conclude the trip never started / stalled.
+    private static readonly TimeSpan TravelQuietPeriod = TimeSpan.FromSeconds(22);
+    // After we've clearly arrived (zone changed, settled), how long to let the
+    // board object stream in before giving up on it.
+    private static readonly TimeSpan TravelArriveSettle = TimeSpan.FromSeconds(6);
 
     private readonly PurchaseConfirmationWatcher watcher = new();
     private readonly BehaviorRecorder recorder;
@@ -78,9 +82,11 @@ public sealed class MarketBuyRunner : IDisposable
     // Lifestream "/li ..." travel to a board
     private bool triedLifestreamThisItem;
     private bool lifestreamTravelActive;
-    private bool liSawBusy;
-    private DateTime liLastBusyUtc;
     private string? travelDestLabel;
+    private uint travelStartTerritory;
+    private Vector3 travelLastPos;
+    private DateTime travelLastSignalUtc;
+    private DateTime travelArrivedUtc;
 
     // per-item working state
     private int itemIndex;
@@ -435,8 +441,10 @@ public sealed class MarketBuyRunner : IDisposable
 
                 triedLifestreamThisItem = true;
                 lifestreamTravelActive = true;
-                liSawBusy = false;
-                liLastBusyUtc = DateTime.UtcNow;
+                travelStartTerritory = GameState.TerritoryId;
+                travelLastPos = GameState.PlayerPosition();
+                travelLastSignalUtc = DateTime.UtcNow;
+                travelArrivedUtc = default;
                 Log?.Invoke($"No board nearby — travelling to {dest}.");
                 Goto(Phase.TravelWait);
                 return;
@@ -452,13 +460,8 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
-                var busy = Lifestream.IsBusy();
-                if (busy)
-                    liLastBusyUtc = DateTime.UtcNow;
-                liSawBusy |= busy;
-
-                // Arrived within reach of a board — hand back to LocateBoard,
-                // which interacts or does a short vnav hop.
+                // Success: a board is in reach — hand back to LocateBoard, which
+                // interacts or does a short vnav hop.
                 if (MarketBoardLocator.FindNearest(MarketBoardLocator.NavigateSearchRadius) is not null)
                 {
                     lifestreamTravelActive = false;
@@ -474,21 +477,38 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
-                // Command never took.
-                if (!liSawBusy && Elapsed > LifestreamStartGrace)
+                // "Travel is happening" — key off anything observable, not just
+                // Lifestream.IsBusy (a plain "/li tp" teleport never sets it).
+                var here = GameState.PlayerPosition();
+                var moving = Vector3.Distance(here, travelLastPos) > 0.3f;
+                travelLastPos = here;
+                var zoned = GameState.TerritoryId != travelStartTerritory;
+                if (Lifestream.IsBusy() || GameState.IsBetweenAreas || zoned || moving)
+                    travelLastSignalUtc = DateTime.UtcNow;
+
+                // Clearly arrived: zone changed, not zoning, Lifestream idle.
+                // Give the board object a few seconds to stream in, then fail.
+                if (zoned && !GameState.IsBetweenAreas && !Lifestream.IsBusy())
                 {
-                    lifestreamTravelActive = false;
-                    StopItem(StopReason.TravelFailed, "Lifestream did not start travelling.");
+                    if (travelArrivedUtc == default)
+                        travelArrivedUtc = DateTime.UtcNow;
+                    if (DateTime.UtcNow - travelArrivedUtc > TravelArriveSettle)
+                    {
+                        lifestreamTravelActive = false;
+                        StopItem(StopReason.TravelFailed,
+                            $"Reached {travelDestLabel ?? "the destination"} but no Market Board is in reach — "
+                            + "the route may need an aethernet hop, or vnavmesh isn't ready.");
+                    }
                     return;
                 }
+                travelArrivedUtc = default;
 
-                // Lifestream ran and has been idle a while, but we're not near a
-                // board (bad route, or it dropped us short).
-                if (liSawBusy && !busy && !GameState.IsBetweenAreas
-                    && DateTime.UtcNow - liLastBusyUtc > LifestreamDoneGrace)
+                // No sign of travel for a long stretch — it never started or stalled.
+                if (DateTime.UtcNow - travelLastSignalUtc > TravelQuietPeriod)
                 {
                     lifestreamTravelActive = false;
-                    StopItem(StopReason.TravelFailed, "Lifestream finished travelling but no Market Board is in reach.");
+                    StopItem(StopReason.TravelFailed,
+                        "Lifestream never started travelling (is the destination attuned?).");
                     return;
                 }
 
