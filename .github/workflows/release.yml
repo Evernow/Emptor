@@ -119,7 +119,8 @@ jobs:
           $entry.DownloadLinkInstall    = $dl
           $entry.DownloadLinkUpdate     = $dl
           $entry.DownloadLinkTesting    = $dl
-          $master | ConvertTo-Json -Depth 10 | Set-Content pluginmaster.json -Encoding UTF8
+          # -AsArray: a one-plugin repo is still a JSON array, not a bare object
+          ConvertTo-Json -InputObject @($master) -Depth 10 -AsArray | Set-Content pluginmaster.json -Encoding UTF8
 
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
