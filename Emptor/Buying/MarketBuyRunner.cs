@@ -414,9 +414,14 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
+                if (!Worlds.IsReachable(target))
+                {
+                    FailOrder($"{target.Name} ({target.DcName}) isn't reachable — data-centre travel only covers your home region's data centres and Materia.");
+                    return;
+                }
                 if (!Lifestream.CanVisitSameDc(target.Name) && !Lifestream.CanVisitCrossDc(target.Name))
                 {
-                    FailOrder($"Can't reach {target.Name} from here — not a same-DC visit and not data-centre-travel reachable.");
+                    FailOrder($"Lifestream can't currently travel to {target.Name} (world full, or a new-character restriction).");
                     return;
                 }
 

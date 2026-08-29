@@ -138,8 +138,10 @@ public static class Worlds
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n).ToList();
 
     /// <summary>
-    /// Data-centre-travel rule: the player's own region's DCs, plus Materia
-    /// (Oceania). A Materia home world can only reach Materia.
+    /// Data-centre-travel rule, keyed on the <b>home</b> world's region (where
+    /// the character is *from*), never the current location: a non-Materia
+    /// character can always reach every DC in their home region plus Materia,
+    /// from anywhere. A Materia character can only ever reach Materia.
     /// </summary>
     public static IReadOnlyList<string> ReachableDatacenters(WorldInfo home)
     {
@@ -148,6 +150,24 @@ public static class Worlds
         return DatacentersInRegion(home.RegionId)
             .Concat(DatacentersInRegion(OceaniaRegionId))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>Every public world the character may travel to right now (see <see cref="ReachableDatacenters"/>).</summary>
+    public static IReadOnlyList<WorldInfo> ReachableWorlds()
+    {
+        var home = HomeWorld();
+        if (home is null)
+            return Array.Empty<WorldInfo>();
+        var dcs = ReachableDatacenters(home).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return AllPublic().Where(w => dcs.Contains(w.DcName)).ToList();
+    }
+
+    /// <summary>Can the character travel to <paramref name="target"/>? (home region's DCs + Materia)</summary>
+    public static bool IsReachable(WorldInfo target)
+    {
+        var home = HomeWorld();
+        return home is not null
+            && ReachableDatacenters(home).Contains(target.DcName, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>Universalis region location strings covering the Reachable scope.</summary>

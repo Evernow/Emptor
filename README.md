@@ -145,10 +145,11 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
   `Emptor.GetCities` returns this list as JSON: `[{ "key": "kugane", "display":
   "Kugane", "route": "AethernetHop" }, …]` where `route` is `LiMarketBoard`,
   `Teleport`, or `AethernetHop`.
-- `world` (optional) → travel to this world first (name or numeric id). Any world
-  the character can reach: same data centre (World Visit) or data-centre travel
-  within the region, plus Materia. Requires Lifestream; ignored when `skipTravel`
-  is set. `Emptor.GetReachableWorlds` lists what's reachable right now.
+- `world` (optional) → travel to this world first (name or numeric id). Must be a
+  world the character can reach — every data centre in the character's **home**
+  region, plus **Materia** (a Materia character can only reach Materia). Anything
+  else is rejected at submit time. Requires Lifestream; ignored when `skipTravel`
+  is set. `Emptor.GetReachableWorlds` lists exactly what's allowed.
 - `returnToHomeWorld` (optional, default `false`) → after a `world` hop, travel
   back to the home world once the order finishes.
 

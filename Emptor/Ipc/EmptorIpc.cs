@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -117,8 +118,18 @@ public sealed class EmptorIpc : IDisposable
         if (!string.IsNullOrWhiteSpace(dto.City) && city is null)
             return Rejected($"Unknown city '{dto.City}'. Known: {GameData.MarketCities.KnownKeys()}.");
 
-        if (!string.IsNullOrWhiteSpace(dto.World) && Worlds.Resolve(dto.World) is null)
-            return Rejected($"Unknown world '{dto.World}'.");
+        string? worldName = null;
+        if (!string.IsNullOrWhiteSpace(dto.World))
+        {
+            var w = Worlds.Resolve(dto.World);
+            if (w is null)
+                return Rejected($"Unknown world '{dto.World}'.");
+            if (!Worlds.IsReachable(w))
+                return Rejected(
+                    $"World '{w.Name}' ({w.DcName}) is not reachable — data-centre travel only reaches your "
+                    + "home region's data centres and Materia. See Emptor.GetReachableWorlds.");
+            worldName = w.Name;
+        }
 
         var request = new BuyRequest
         {
@@ -126,7 +137,7 @@ public sealed class EmptorIpc : IDisposable
             TotalGilBudget = dto.TotalGilBudget ?? 0,
             SkipTravel = dto.SkipTravel ?? false,
             City = city?.Key,
-            World = string.IsNullOrWhiteSpace(dto.World) ? null : Worlds.Resolve(dto.World)!.Name,
+            World = worldName,
             ReturnToHomeWorld = dto.ReturnToHomeWorld ?? false,
         };
 
@@ -136,7 +147,7 @@ public sealed class EmptorIpc : IDisposable
             if (resolvedId == 0 && !string.IsNullOrWhiteSpace(i.ItemName))
                 resolvedId = ItemResolver.ResolveExact(i.ItemName!);
             if (resolvedId == 0)
-                return Rejected($"Could not resolve item '{i.ItemName ?? i.ItemId?.ToString() ?? "?"}'.");
+                return Rejected($"Could not resolve item '{i.ItemName ?? i.ItemId?.ToString(CultureInfo.InvariantCulture) ?? "?"}'.");
             if (!ItemResolver.IsMarketable(resolvedId))
                 return Rejected($"Item {resolvedId} is not marketable.");
             if (i.MaxUnitPrice < 0 || i.Quantity < 0)
@@ -215,7 +226,7 @@ public sealed class EmptorIpc : IDisposable
                 id = ItemResolver.ResolveExact(it.ItemName!);
             if (id == 0 || !ItemResolver.IsMarketable(id))
                 return JsonSerializer.Serialize(
-                    new PriceReplyDto { Error = $"Item '{it.ItemName ?? it.ItemId?.ToString() ?? "?"}' is not a marketable item." },
+                    new PriceReplyDto { Error = $"Item '{it.ItemName ?? it.ItemId?.ToString(CultureInfo.InvariantCulture) ?? "?"}' is not a marketable item." },
                     JsonOpts);
             ids.Add(id);
         }

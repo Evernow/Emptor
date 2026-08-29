@@ -238,8 +238,9 @@ public sealed class ConfigWindow : Window, IDisposable
                 Config.Save();
             }
 
-            // World to travel to first
-            var worlds = Worlds.AllPublic();
+            // World to travel to first — only worlds the character can reach
+            // (home region's data centres + Materia).
+            var worlds = Worlds.ReachableWorlds();
             var wNames = new string[worlds.Count + 1];
             wNames[0] = "Current world";
             for (var i = 0; i < worlds.Count; i++)
@@ -248,6 +249,13 @@ public sealed class ConfigWindow : Window, IDisposable
             for (var i = 0; i < worlds.Count; i++)
                 if (string.Equals(worlds[i].Name, Config.PreferredWorld, StringComparison.OrdinalIgnoreCase))
                     wSel = i + 1;
+            // Saved world no longer reachable (e.g. logged into a different
+            // character) — drop the pin.
+            if (wSel == 0 && !string.IsNullOrEmpty(Config.PreferredWorld) && worlds.Count > 0)
+            {
+                Config.PreferredWorld = string.Empty;
+                Config.Save();
+            }
             ImGui.SetNextItemWidth(240);
             if (Combo("World##buyworld", wNames, ref wSel))
             {

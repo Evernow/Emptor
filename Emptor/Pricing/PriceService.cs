@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -328,11 +329,16 @@ public sealed class PriceService : IDisposable
         _ => "region",
     };
 
+    // NOTE: the numeric fields on the DTOs (prices, velocities, timestamps) go
+    // out as JSON number tokens, which System.Text.Json always writes with an
+    // invariant '.' regardless of the machine's locale. Only strings that embed
+    // a formatted number (like this one) need an explicit invariant culture.
     private static string Humanize(TimeSpan ago)
     {
         if (ago < TimeSpan.Zero) ago = TimeSpan.Zero;
-        if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
-        if (ago.TotalHours < 24) return $"{(int)ago.TotalHours}h ago";
-        return $"{(int)ago.TotalDays}d ago";
+        var (n, unit) = ago.TotalMinutes < 60 ? ((int)ago.TotalMinutes, "m")
+            : ago.TotalHours < 24 ? ((int)ago.TotalHours, "h")
+            : ((int)ago.TotalDays, "d");
+        return string.Create(CultureInfo.InvariantCulture, $"{n}{unit} ago");
     }
 }
