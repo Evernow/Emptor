@@ -4,10 +4,8 @@ using System.Linq;
 namespace Emptor.GameData;
 
 /// <summary>
-/// Thin Lifestream bridge. Emptor needs exactly one thing from Lifestream:
-/// "take me to a Market Board in this city" — the <c>/li mb</c> command, which
-/// aethernets to the nearest board shard and walks the rest. Choosing a world /
-/// data centre is the caller's job, not Emptor's.
+/// Thin Lifestream bridge — reaching a Market Board (<c>/li mb</c> and friends)
+/// and, when a buy order pins a <c>world</c>, world / data-centre travel.
 /// </summary>
 public static class Lifestream
 {
@@ -48,5 +46,32 @@ public static class Lifestream
     {
         try { Plugin.PluginInterface.GetIpcSubscriber<object>("Lifestream.Abort").InvokeAction(); }
         catch { /* ignore */ }
+    }
+
+    // ---- world / data-centre travel ------------------------------------
+
+    /// <summary>Can the character world-visit this world (same data centre)?</summary>
+    public static bool CanVisitSameDc(string world)
+    {
+        try { return Plugin.PluginInterface.GetIpcSubscriber<string, bool>("Lifestream.CanVisitSameDC").InvokeFunc(world); }
+        catch { return false; }
+    }
+
+    /// <summary>Can the character data-centre-travel to this world?</summary>
+    public static bool CanVisitCrossDc(string world)
+    {
+        try { return Plugin.PluginInterface.GetIpcSubscriber<string, bool>("Lifestream.CanVisitCrossDC").InvokeFunc(world); }
+        catch { return false; }
+    }
+
+    /// <summary>Start travel to another world (same-DC visit or DC travel). False if refused.</summary>
+    public static bool ChangeWorld(string world)
+    {
+        try { return Plugin.PluginInterface.GetIpcSubscriber<string, bool>("Lifestream.ChangeWorld").InvokeFunc(world); }
+        catch (Exception ex)
+        {
+            Plugin.Log.Warning(ex, $"[Emptor] Lifestream.ChangeWorld(\"{world}\") failed.");
+            return false;
+        }
     }
 }

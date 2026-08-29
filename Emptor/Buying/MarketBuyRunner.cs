@@ -34,6 +34,7 @@ public sealed class MarketBuyRunner : IDisposable
     private enum Phase
     {
         Idle, ItemNext, ItemBegin, BlockedWait,
+        WorldTravel, WorldTravelWait, ReturnHome, ReturnHomeWait,
         Dismount, LocateBoard, TravelToBoard, TravelWait, ApproachAnchor, NavigateBoard, InteractBoard, BoardOpenWait,
         Think,
         PrepSearch, TypeSearch, SubmitSearch, SearchWait,
@@ -56,6 +57,9 @@ public sealed class MarketBuyRunner : IDisposable
     // After we've clearly arrived (zone changed, settled), how long to let the
     // board object stream in before giving up on it.
     private static readonly TimeSpan TravelArriveSettle = TimeSpan.FromSeconds(6);
+    // World / data-centre travel: the queue at the far end can be minutes.
+    private static readonly TimeSpan WorldTravelTimeout = TimeSpan.FromMinutes(6);
+    private static readonly TimeSpan WorldTravelQuiet = TimeSpan.FromSeconds(35);
 
     private readonly PurchaseConfirmationWatcher watcher = new();
     private readonly BehaviorRecorder recorder;
@@ -88,6 +92,14 @@ public sealed class MarketBuyRunner : IDisposable
     private DateTime travelLastSignalUtc;
     private DateTime travelArrivedUtc;
     private Vector3 anchorTarget;
+
+    // world / DC travel (order-scoped)
+    private bool worldTravelDone;
+    private bool worldHopped;
+    private uint homeWorldId;
+    private uint targetWorldId;
+    private uint worldTravelStartWorld;
+    private DateTime worldTravelLastSignalUtc;
 
     // per-item working state
     private int itemIndex;
@@ -148,6 +160,10 @@ public sealed class MarketBuyRunner : IDisposable
     {
         Phase.ItemNext or Phase.ItemBegin => "Preparing…",
         Phase.BlockedWait => $"Waiting — {GameState.GetBlockReason() ?? "blocked"}",
+        Phase.WorldTravel or Phase.WorldTravelWait =>
+            $"Travelling to {Worlds.ById(targetWorldId)?.Name ?? "another world"}…",
+        Phase.ReturnHome or Phase.ReturnHomeWait =>
+            $"Returning to {Worlds.ById(homeWorldId)?.Name ?? "the home world"}…",
         Phase.Dismount => "Dismounting…",
         Phase.LocateBoard => "Looking for a Market Board…",
         Phase.TravelToBoard => travelDestLabel is null ? "Heading to a Market Board…" : $"Heading to {travelDestLabel}…",
@@ -217,6 +233,9 @@ public sealed class MarketBuyRunner : IDisposable
         boughtListingIds.Clear();
         lifestreamTravelActive = false;
         travelDestLabel = null;
+        worldTravelDone = false;
+        worldHopped = false;
+        homeWorldId = Worlds.HomeWorld()?.Id ?? 0;
         Goto(Phase.ItemNext);
 
         startedCaptureForThisOrder = false;
@@ -278,7 +297,17 @@ public sealed class MarketBuyRunner : IDisposable
             case Phase.ItemNext:
                 itemIndex++;
                 if (CancelledNow()) { FinishOrder(OrderState.Cancelled, "Cancelled."); return; }
-                if (itemIndex >= order!.Request.Items.Count) { FinishOrder(OrderState.Completed, "Completed."); return; }
+                if (itemIndex >= order!.Request.Items.Count)
+                {
+                    if (order.Request.ReturnToHomeWorld && worldHopped && homeWorldId != 0 && Lifestream.Available
+                        && (Worlds.CurrentWorld()?.Id ?? 0) != homeWorldId)
+                    {
+                        Goto(Phase.ReturnHome);
+                        return;
+                    }
+                    FinishOrder(OrderState.Completed, "Completed.");
+                    return;
+                }
                 item = order.Request.Items[itemIndex];
                 result = new BuyItemResult { ItemId = item.ItemId, RequestedQuantity = item.Quantity };
                 order.Items.Add(result);
@@ -302,6 +331,16 @@ public sealed class MarketBuyRunner : IDisposable
                 }
                 result!.ItemId = resolvedItemId;
                 result.ItemName = ItemResolver.GetName(resolvedItemId);
+
+                // World / data-centre travel happens once, before anything
+                // board-related. skipTravel means "use the board I'm at" — no hop.
+                if (!worldTravelDone && !order!.Request.SkipTravel
+                    && !string.IsNullOrWhiteSpace(order.Request.World))
+                {
+                    Goto(Phase.WorldTravel);
+                    return;
+                }
+                worldTravelDone = true;
 
                 if (GameState.GetBlockReason() is { } block && !PlayerActions.IsMounted)
                 {
@@ -329,6 +368,142 @@ public sealed class MarketBuyRunner : IDisposable
                 if (CancelledNow()) { StopItem(StopReason.Cancelled, "Cancelled while blocked."); return; }
                 if (GameState.GetBlockReason() is null) { Goto(Phase.LocateBoard); return; }
                 if (Elapsed > BlockedTimeout) StopItem(StopReason.Blocked, "Still blocked after waiting.");
+                return;
+            }
+
+            case Phase.WorldTravel:
+            {
+                if (CancelledNow()) { FailOrder("Cancelled before world travel."); return; }
+
+                if (!Lifestream.Available)
+                {
+                    FailOrder("This order pins a world, but Lifestream is not installed.");
+                    return;
+                }
+
+                var target = Worlds.Resolve(order!.Request.World);
+                if (target is null)
+                {
+                    FailOrder($"Unknown world \"{order.Request.World}\".");
+                    return;
+                }
+
+                var cur = Worlds.CurrentWorld();
+                if (cur is not null && cur.Id == target.Id)
+                {
+                    worldTravelDone = true;
+                    Goto(Phase.ItemBegin);
+                    return;
+                }
+
+                if (Lifestream.IsBusy())
+                {
+                    if (Elapsed > WorldTravelTimeout) FailOrder("Lifestream stayed busy — could not start world travel.");
+                    return;
+                }
+
+                if (!Lifestream.CanVisitSameDc(target.Name) && !Lifestream.CanVisitCrossDc(target.Name))
+                {
+                    FailOrder($"Can't reach {target.Name} from here — not a same-DC visit and not data-centre-travel reachable.");
+                    return;
+                }
+
+                if (!Lifestream.ChangeWorld(target.Name))
+                {
+                    FailOrder($"Lifestream refused travel to {target.Name}.");
+                    return;
+                }
+
+                targetWorldId = target.Id;
+                worldTravelStartWorld = cur?.Id ?? 0;
+                worldTravelLastSignalUtc = DateTime.UtcNow;
+                travelArrivedUtc = default;
+                Log?.Invoke($"Travelling to world {target.Name}…");
+                Goto(Phase.WorldTravelWait);
+                return;
+            }
+
+            case Phase.WorldTravelWait:
+            {
+                if (CancelledNow()) { Lifestream.Abort(); FailOrder("Cancelled during world travel."); return; }
+
+                var nowWorld = Worlds.CurrentWorld()?.Id ?? 0;
+                if (nowWorld == targetWorldId && !GameState.IsBetweenAreas && !Lifestream.IsBusy())
+                {
+                    if (travelArrivedUtc == default) travelArrivedUtc = DateTime.UtcNow;
+                    if (DateTime.UtcNow - travelArrivedUtc > TravelArriveSettle)
+                    {
+                        worldTravelDone = true;
+                        worldHopped = true;
+                        travelArrivedUtc = default;
+                        Log?.Invoke($"Arrived on {Worlds.ById(targetWorldId)?.Name ?? "the target world"}.");
+                        Goto(Phase.ItemBegin);
+                    }
+                    return;
+                }
+                travelArrivedUtc = default;
+
+                if (Lifestream.IsBusy() || GameState.IsBetweenAreas || nowWorld != worldTravelStartWorld)
+                    worldTravelLastSignalUtc = DateTime.UtcNow;
+
+                if (Elapsed > WorldTravelTimeout)
+                {
+                    Lifestream.Abort();
+                    FailOrder("Timed out travelling to the target world.");
+                    return;
+                }
+                if (DateTime.UtcNow - worldTravelLastSignalUtc > WorldTravelQuiet)
+                {
+                    Lifestream.Abort();
+                    FailOrder("World travel stalled — Lifestream produced no progress.");
+                    return;
+                }
+                return;
+            }
+
+            case Phase.ReturnHome:
+            {
+                if (CancelledNow()) { FinishOrder(OrderState.Completed, "Completed (return-home cancelled)."); return; }
+                if (Lifestream.IsBusy())
+                {
+                    if (Elapsed > WorldTravelTimeout)
+                        FinishOrder(OrderState.Completed, "Completed (Lifestream busy — did not return home).");
+                    return;
+                }
+
+                var home = Worlds.ById(homeWorldId);
+                if (home is null || !Lifestream.ChangeWorld(home.Name))
+                {
+                    FinishOrder(OrderState.Completed, "Completed (could not start the return-home trip).");
+                    return;
+                }
+
+                targetWorldId = homeWorldId;
+                worldTravelStartWorld = Worlds.CurrentWorld()?.Id ?? 0;
+                worldTravelLastSignalUtc = DateTime.UtcNow;
+                Log?.Invoke($"Returning to home world {home.Name}…");
+                Goto(Phase.ReturnHomeWait);
+                return;
+            }
+
+            case Phase.ReturnHomeWait:
+            {
+                var nowWorld = Worlds.CurrentWorld()?.Id ?? 0;
+                if (nowWorld == homeWorldId && !GameState.IsBetweenAreas && !Lifestream.IsBusy())
+                {
+                    FinishOrder(OrderState.Completed, "Completed.");
+                    return;
+                }
+
+                if (Lifestream.IsBusy() || GameState.IsBetweenAreas || nowWorld != worldTravelStartWorld)
+                    worldTravelLastSignalUtc = DateTime.UtcNow;
+
+                if (Elapsed > WorldTravelTimeout || DateTime.UtcNow - worldTravelLastSignalUtc > WorldTravelQuiet)
+                {
+                    Lifestream.Abort();
+                    FinishOrder(OrderState.Completed, "Completed (the return-home trip did not finish).");
+                    return;
+                }
                 return;
             }
 

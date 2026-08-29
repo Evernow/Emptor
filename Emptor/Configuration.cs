@@ -70,6 +70,12 @@ public sealed class Configuration : IPluginConfiguration
     /// </summary>
     public string PreferredCity { get; set; } = string.Empty;
 
+    /// <summary>World a config-window run travels to first. Empty = current world.</summary>
+    public string PreferredWorld { get; set; } = string.Empty;
+
+    /// <summary>Scope used for a price lookup when the caller / UI doesn't pick one.</summary>
+    public Emptor.GameData.PriceScope DefaultPriceScope { get; set; } = Emptor.GameData.PriceScope.Datacenter;
+
     /// <summary>Record every automated run to a capture file for later diffing.</summary>
     public bool CaptureAutomatedRuns { get; set; }
 

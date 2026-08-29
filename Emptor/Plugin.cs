@@ -37,6 +37,7 @@ public sealed class Plugin : IDalamudPlugin
     internal MarketBuyRunner Runner { get; }
     internal OrderQueue Orders { get; }
     internal BehaviorRecorder Recorder { get; }
+    internal Pricing.PriceService Prices { get; }
 
     private readonly EmptorIpc ipc;
     private readonly WindowSystem windowSystem = new("Emptor");
@@ -52,7 +53,8 @@ public sealed class Plugin : IDalamudPlugin
         Recorder = new BehaviorRecorder();
         Runner = new MarketBuyRunner(Recorder);
         Orders = new OrderQueue(Runner);
-        ipc = new EmptorIpc(Orders, Runner);
+        Prices = new Pricing.PriceService();
+        ipc = new EmptorIpc(Orders, Runner, Prices);
 
         configWindow = new ConfigWindow(this);
         Runner.Log = configWindow.AppendLog;
@@ -95,6 +97,7 @@ public sealed class Plugin : IDalamudPlugin
         Orders.Dispose();
         Runner.Dispose();
         Recorder.Dispose();
+        Prices.Dispose();
         configWindow.Dispose();
 
         ECommonsMain.Dispose();

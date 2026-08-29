@@ -82,13 +82,15 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
 
 | Gate | Signature | Purpose |
 |---|---|---|
-| `Emptor.ApiVersion` | `Func<int>` | currently `4` |
+| `Emptor.ApiVersion` | `Func<int>` | currently `5` |
 | `Emptor.IsBusy` | `Func<bool>` | an order is running |
 | `Emptor.GetCities` | `Func<string>` | JSON array of `{key, display, route}` — valid `city` values |
+| `Emptor.GetReachableWorlds` | `Func<string>` | JSON: home/current world, region, and every DC + world the character can travel to |
 | `Emptor.SubmitOrder` | `Func<string,string>` | request JSON → order JSON (queued) |
 | `Emptor.GetOrder` | `Func<string,string>` | orderId → order JSON (live) |
 | `Emptor.CancelOrder` | `Func<string,bool>` | request stop |
 | `Emptor.OrderCompleted` | `Action<string>` | fires with the orderId on a terminal state |
+| `Emptor.LookupPrices` | `Func<string,string>` | Universalis price lookup — no Market Board needed (see [Prices](#prices)) |
 
 ### Request
 
@@ -98,6 +100,8 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
   "totalGilBudget": 5000000,
   "skipTravel": false,
   "city": "kugane",
+  "world": "Gilgamesh",
+  "returnToHomeWorld": false,
   "items": [{
     "itemId": 44096,
     "itemName": "Grade 8 Tincture of Strength",
@@ -141,6 +145,12 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
   `Emptor.GetCities` returns this list as JSON: `[{ "key": "kugane", "display":
   "Kugane", "route": "AethernetHop" }, …]` where `route` is `LiMarketBoard`,
   `Teleport`, or `AethernetHop`.
+- `world` (optional) → travel to this world first (name or numeric id). Any world
+  the character can reach: same data centre (World Visit) or data-centre travel
+  within the region, plus Materia. Requires Lifestream; ignored when `skipTravel`
+  is set. `Emptor.GetReachableWorlds` lists what's reachable right now.
+- `returnToHomeWorld` (optional, default `false`) → after a `world` hop, travel
+  back to the home world once the order finishes.
 
 The three stop conditions a caller usually cares about map directly onto the
 request: **max count** = `quantity`, **max total gil** = `totalGilBudget`, **max
@@ -155,6 +165,7 @@ triggered, and `nextLowestUnitPrice` is what the next unit would have cost.
   "state": "queued|running|completed|cancelled|rejected|failed",
   "message": "…",
   "city": "kugane",
+  "world": "Gilgamesh",
   "totalGilSpent": 1750000,
   "items": [{
     "itemId": 44096,
@@ -192,6 +203,53 @@ var orderId = JsonDocument.Parse(orderJson).RootElement.GetProperty("orderId").G
 // later / on Emptor.OrderCompleted:
 var result = get.InvokeFunc(orderId);
 ```
+
+## Prices
+
+`Emptor.LookupPrices` returns [Universalis](https://universalis.app) market data
+for items **without needing a Market Board** — usable anywhere. Also available
+in-game under the **Prices** tab of the `/emptor` window.
+
+```json
+{
+  "scope": "datacenter",
+  "target": "Aether",
+  "refresh": false,
+  "items": [ { "itemName": "Darksteel Ore" }, { "itemId": 5111 } ]
+}
+```
+
+- `scope`: `"world"` | `"datacenter"` | `"region"` | `"reachable"`. Omitted → the
+  configured default (data centre). `reachable` = the player's region **+ Materia**.
+- `target`: for `world` / `datacenter` / `region`, which one (name or id). Omitted
+  → the player's current world / DC / region. Ignored for `reachable`.
+- `refresh`: bypass the 45-minute cache.
+
+The reply carries cached items immediately and lists the rest as `pending` while a
+background fetch runs — call again in ~1 s for those.
+
+```json
+{
+  "scope": "datacenter",
+  "pending": [ 5111 ],
+  "items": [{
+    "itemId": 12537, "itemName": "…", "scope": "datacenter",
+    "fetchedUnixMs": 1787900000000,
+    "levels": [
+      { "level": "datacenter", "location": "Aether",
+        "nq": { "minListing": { "price": 480, "world": "Gilgamesh", "age": "2h ago" },
+                "recentPurchase": { "price": 500, "world": "Jenova", "age": "18m ago" },
+                "averageSalePrice": 512.4, "dailySaleVelocity": 37.1 },
+        "hq": { … } },
+      { "level": "region", "location": "North-America", "nq": { … }, "hq": { … } }
+    ]
+  }]
+}
+```
+
+A `world` query returns world + DC + region levels; a `datacenter` query returns
+DC + region; `region` and `reachable` return the region level (`reachable` merges
+the cheapest across the region and Materia).
 
 ## Status
 

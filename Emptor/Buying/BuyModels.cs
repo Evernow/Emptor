@@ -102,6 +102,20 @@ public sealed class BuyRequest
     /// </summary>
     public string? City { get; set; }
 
+    /// <summary>
+    /// World to travel to (name or id) before buying — any world the character
+    /// can reach (same DC or data-centre travel, incl. Materia). Null / empty =
+    /// buy on the current world. Requires Lifestream. Ignored when
+    /// <see cref="SkipTravel"/>.
+    /// </summary>
+    public string? World { get; set; }
+
+    /// <summary>
+    /// After a <see cref="World"/> hop, return to the home world once the order
+    /// finishes. Default false — the caller manages the return trip.
+    /// </summary>
+    public bool ReturnToHomeWorld { get; set; }
+
     public List<BuyRequestItem> Items { get; set; } = new();
 }
 

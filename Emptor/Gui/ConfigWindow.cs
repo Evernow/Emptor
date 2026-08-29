@@ -6,6 +6,7 @@ using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Emptor.Buying;
 using Emptor.GameData;
+using Emptor.Pricing;
 
 namespace Emptor.Gui;
 
@@ -19,6 +20,14 @@ public sealed class ConfigWindow : Window, IDisposable
     private const int MaxLog = 200;
 
     private string nameFilter = string.Empty;
+
+    // Prices tab state
+    private static readonly string[] ScopeLabels = { "World", "Data centre", "Region", "Reachable (region + Materia)" };
+    private string priceItemInput = string.Empty;
+    private int priceScopeIdx = 1;
+    private string priceTarget = string.Empty;
+    private PriceRequest? priceActive;
+    private string priceMsg = string.Empty;
 
     public ConfigWindow(Plugin plugin) : base("Emptor##EmptorMain")
     {
@@ -45,15 +54,30 @@ public sealed class ConfigWindow : Window, IDisposable
     {
         var busy = plugin.Orders.IsBusy;
 
-        DrawShoppingList(busy);
-        ImGui.Separator();
-        DrawControls(busy);
-        ImGui.Separator();
-        DrawCapture();
-        ImGui.Separator();
-        DrawProgress();
-        ImGui.Separator();
-        DrawLog();
+        if (ImGui.BeginTabBar("##emptorTabs"))
+        {
+            if (ImGui.BeginTabItem("Buy"))
+            {
+                DrawShoppingList(busy);
+                ImGui.Separator();
+                DrawControls(busy);
+                ImGui.Separator();
+                DrawCapture();
+                ImGui.Separator();
+                DrawProgress();
+                ImGui.Separator();
+                DrawLog();
+                ImGui.EndTabItem();
+            }
+
+            if (ImGui.BeginTabItem("Prices"))
+            {
+                DrawPrices();
+                ImGui.EndTabItem();
+            }
+
+            ImGui.EndTabBar();
+        }
     }
 
     private void DrawShoppingList(bool busy)
@@ -164,6 +188,7 @@ public sealed class ConfigWindow : Window, IDisposable
                 ClientRequestId = "ui",
                 TotalGilBudget = Config.TotalGilBudget,
                 City = string.IsNullOrWhiteSpace(Config.PreferredCity) ? null : Config.PreferredCity,
+                World = string.IsNullOrWhiteSpace(Config.PreferredWorld) ? null : Config.PreferredWorld,
                 Items = Config.ShoppingList
                     .Where(r => r.Enabled && r.Quantity > 0 && r.ItemId != 0)
                     .Select(r => r.ToRequestItem())
@@ -210,6 +235,23 @@ public sealed class ConfigWindow : Window, IDisposable
             if (Combo("Travel to##city", names, ref sel))
             {
                 Config.PreferredCity = sel == 0 ? string.Empty : cities[sel - 1].Key;
+                Config.Save();
+            }
+
+            // World to travel to first
+            var worlds = Worlds.AllPublic();
+            var wNames = new string[worlds.Count + 1];
+            wNames[0] = "Current world";
+            for (var i = 0; i < worlds.Count; i++)
+                wNames[i + 1] = $"{worlds[i].Name}  ({worlds[i].DcName})";
+            var wSel = 0;
+            for (var i = 0; i < worlds.Count; i++)
+                if (string.Equals(worlds[i].Name, Config.PreferredWorld, StringComparison.OrdinalIgnoreCase))
+                    wSel = i + 1;
+            ImGui.SetNextItemWidth(240);
+            if (Combo("World##buyworld", wNames, ref wSel))
+            {
+                Config.PreferredWorld = wSel == 0 ? string.Empty : worlds[wSel - 1].Name;
                 Config.Save();
             }
         }
@@ -330,6 +372,116 @@ public sealed class ConfigWindow : Window, IDisposable
             if (it.StoppedReason != StopReason.None) line += $"  [{it.StoppedReason}]";
             if (it.NextLowestUnitPrice is { } n) line += $"  next {n:N0} ×{it.NextLowestQuantity}";
             ImGui.TextUnformatted(line);
+        }
+    }
+
+    private void DrawPrices()
+    {
+        ImGui.TextWrapped("Universalis price lookup — works anywhere, no Market Board needed.");
+        ImGui.Spacing();
+
+        ImGui.SetNextItemWidth(260);
+        ImGui.InputTextWithHint("##priceItem", "item name", ref priceItemInput, 128);
+
+        ImGui.SetNextItemWidth(220);
+        Combo("Scope##priceScope", ScopeLabels, ref priceScopeIdx);
+
+        if (priceScopeIdx != 3)
+        {
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(160);
+            var hint = priceScopeIdx switch { 0 => "world (blank = current)", 1 => "DC (blank = current)", _ => "region (blank = current)" };
+            ImGui.InputTextWithHint("##priceTarget", hint, ref priceTarget, 64);
+        }
+
+        var scope = (PriceScope)priceScopeIdx;
+
+        if (ImGui.Button("Look up"))
+        {
+            priceMsg = string.Empty;
+            var id = ItemResolver.ResolveExact(priceItemInput);
+            if (id == 0)
+            {
+                var hits = ItemResolver.Search(priceItemInput, 1);
+                id = hits.Count == 1 ? hits[0].ItemId : 0;
+            }
+            if (id == 0)
+                priceMsg = $"No marketable item matches \"{priceItemInput}\".";
+            else
+                priceActive = new PriceRequest(new[] { id }, scope, string.IsNullOrWhiteSpace(priceTarget) ? null : priceTarget.Trim());
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Refresh") && priceActive is not null)
+            plugin.Prices.Lookup(priceActive, refresh: true);
+
+        var home = Worlds.HomeWorld();
+        if (home is not null)
+            ImGui.TextDisabled($"you: {Worlds.CurrentWorld()?.Name ?? home.Name} · {home.DcName} · {home.RegionName}");
+
+        if (!string.IsNullOrEmpty(priceMsg))
+            ImGui.TextColored(new Vector4(0.9f, 0.6f, 0.4f, 1f), priceMsg);
+
+        if (priceActive is null)
+            return;
+
+        var result = plugin.Prices.Lookup(priceActive);
+        if (result.Error is not null)
+        {
+            ImGui.TextColored(new Vector4(0.9f, 0.5f, 0.4f, 1f), result.Error);
+            return;
+        }
+        if (result.Pending.Count > 0 && result.Ready.Count == 0)
+        {
+            ImGui.TextDisabled("Fetching from Universalis…");
+            return;
+        }
+
+        foreach (var ip in result.Ready.Values)
+        {
+            ImGui.Separator();
+            ImGui.TextColored(new Vector4(0.55f, 0.85f, 1f, 1f), $"{ip.ItemName}  ({ip.Scope})");
+            if (ip.Error is not null) { ImGui.TextDisabled(ip.Error); continue; }
+
+            if (ImGui.BeginTable("##prices", 6, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+            {
+                ImGui.TableSetupColumn("Level");
+                ImGui.TableSetupColumn("Cheapest NQ");
+                ImGui.TableSetupColumn("Cheapest HQ");
+                ImGui.TableSetupColumn("Avg sale");
+                ImGui.TableSetupColumn("Sales/day");
+                ImGui.TableSetupColumn("Recent");
+                ImGui.TableHeadersRow();
+
+                foreach (var lvl in ip.Levels)
+                {
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(lvl.Location.Length > 0 ? $"{lvl.Level} ({lvl.Location})" : lvl.Level);
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(FmtPoint(lvl.Nq.MinListing));
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(FmtPoint(lvl.Hq.MinListing));
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(FmtAvg(lvl.Nq.AverageSalePrice, lvl.Hq.AverageSalePrice));
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(FmtAvg(lvl.Nq.DailySaleVelocity, lvl.Hq.DailySaleVelocity));
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(FmtPoint(lvl.Nq.RecentPurchase ?? lvl.Hq.RecentPurchase));
+                }
+                ImGui.EndTable();
+            }
+        }
+
+        static string FmtPoint(PricePoint? p)
+        {
+            if (p is null) return "—";
+            var s = $"{p.Price:N0}g";
+            if (!string.IsNullOrEmpty(p.World)) s += $" @ {p.World}";
+            if (!string.IsNullOrEmpty(p.Age)) s += $" ({p.Age})";
+            return s;
+        }
+
+        static string FmtAvg(double? nq, double? hq)
+        {
+            if (nq is null && hq is null) return "—";
+            var parts = new List<string>();
+            if (nq is { } n) parts.Add($"{n:N0}");
+            if (hq is { } h) parts.Add($"{h:N0} HQ");
+            return string.Join(" / ", parts);
         }
     }
 
