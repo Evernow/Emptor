@@ -73,6 +73,12 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>World a config-window run travels to first. Empty = current world.</summary>
     public string PreferredWorld { get; set; } = string.Empty;
 
+    /// <summary>
+    /// If a teleport is interrupted (combat, movement, …) keep retrying it for
+    /// this many seconds — 5 s between tries — before giving up. 0 = no retry.
+    /// </summary>
+    public int TravelRetrySeconds { get; set; } = 30;
+
     /// <summary>Scope used for a price lookup when the caller / UI doesn't pick one.</summary>
     public Emptor.GameData.PriceScope DefaultPriceScope { get; set; } = Emptor.GameData.PriceScope.Datacenter;
 

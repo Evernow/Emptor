@@ -254,6 +254,14 @@ public sealed class ConfigWindow : Window, IDisposable
                 Config.PreferredWorld = wSel == 0 ? string.Empty : worlds[wSel - 1].Name;
                 Config.Save();
             }
+
+            ImGui.SetNextItemWidth(90);
+            var retry = Math.Clamp(Config.TravelRetrySeconds, 0, 600);
+            if (ImGui.InputInt("Retry a cancelled teleport for (s)##travelRetry", ref retry, 0, 0))
+            {
+                Config.TravelRetrySeconds = Math.Clamp(retry, 0, 600);
+                Config.Save();
+            }
         }
     }
 

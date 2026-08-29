@@ -51,15 +51,16 @@ public sealed class MarketBuyRunner : IDisposable
     private static readonly TimeSpan ConfirmTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan BlockedTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan LifestreamTravelTimeout = TimeSpan.FromSeconds(150);
-    // How long with no travel signal at all (not busy, not zoning, same zone,
-    // not moving) before we conclude the trip never started / stalled.
-    private static readonly TimeSpan TravelQuietPeriod = TimeSpan.FromSeconds(22);
     // After we've clearly arrived (zone changed, settled), how long to let the
     // board object stream in before giving up on it.
     private static readonly TimeSpan TravelArriveSettle = TimeSpan.FromSeconds(6);
     // World / data-centre travel: the queue at the far end can be minutes.
     private static readonly TimeSpan WorldTravelTimeout = TimeSpan.FromMinutes(6);
     private static readonly TimeSpan WorldTravelQuiet = TimeSpan.FromSeconds(35);
+    // How long a single teleport attempt can show no progress before it counts
+    // as failed (a real teleport cast is ~5 s of silence for "/li tp").
+    private static readonly TimeSpan TravelAttemptQuiet = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan TravelRetryDelay = TimeSpan.FromSeconds(5);
 
     private readonly PurchaseConfirmationWatcher watcher = new();
     private readonly BehaviorRecorder recorder;
@@ -100,6 +101,12 @@ public sealed class MarketBuyRunner : IDisposable
     private uint targetWorldId;
     private uint worldTravelStartWorld;
     private DateTime worldTravelLastSignalUtc;
+
+    // teleport retry (per travel leg)
+    private int travelAttempt;
+    private DateTime travelDeadlineUtc;
+    private DateTime travelRetryAtUtc;
+    private bool travelBlockNoticeShown;
 
     // per-item working state
     private int itemIndex;
@@ -236,6 +243,9 @@ public sealed class MarketBuyRunner : IDisposable
         worldTravelDone = false;
         worldHopped = false;
         homeWorldId = Worlds.HomeWorld()?.Id ?? 0;
+        travelAttempt = 0;
+        travelDeadlineUtc = default;
+        travelRetryAtUtc = default;
         Goto(Phase.ItemNext);
 
         startedCaptureForThisOrder = false;
@@ -302,6 +312,7 @@ public sealed class MarketBuyRunner : IDisposable
                     if (order.Request.ReturnToHomeWorld && worldHopped && homeWorldId != 0 && Lifestream.Available
                         && (Worlds.CurrentWorld()?.Id ?? 0) != homeWorldId)
                     {
+                        BeginTravelRetries();
                         Goto(Phase.ReturnHome);
                         return;
                     }
@@ -337,6 +348,7 @@ public sealed class MarketBuyRunner : IDisposable
                 if (!worldTravelDone && !order!.Request.SkipTravel
                     && !string.IsNullOrWhiteSpace(order.Request.World))
                 {
+                    BeginTravelRetries();
                     Goto(Phase.WorldTravel);
                     return;
                 }
@@ -408,17 +420,26 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
+                if (!TravelCanFire(out var whHard, out var whBlock))
+                {
+                    if (whHard)
+                        FailOrder($"Still {whBlock} after retrying world travel for {Plugin.Instance.Configuration.TravelRetrySeconds}s.");
+                    return;
+                }
+
                 if (!Lifestream.ChangeWorld(target.Name))
                 {
                     FailOrder($"Lifestream refused travel to {target.Name}.");
                     return;
                 }
 
+                travelAttempt++;
                 targetWorldId = target.Id;
                 worldTravelStartWorld = cur?.Id ?? 0;
                 worldTravelLastSignalUtc = DateTime.UtcNow;
                 travelArrivedUtc = default;
-                Log?.Invoke($"Travelling to world {target.Name}…");
+                travelRetryAtUtc = default;
+                Log?.Invoke($"{(travelAttempt > 1 ? $"Retry {travelAttempt - 1}: t" : "T")}ravelling to world {target.Name}…");
                 Goto(Phase.WorldTravelWait);
                 return;
             }
@@ -443,7 +464,8 @@ public sealed class MarketBuyRunner : IDisposable
                 }
                 travelArrivedUtc = default;
 
-                if (Lifestream.IsBusy() || GameState.IsBetweenAreas || nowWorld != worldTravelStartWorld)
+                var inTransit = nowWorld != worldTravelStartWorld || GameState.IsBetweenAreas;
+                if (Lifestream.IsBusy() || inTransit)
                     worldTravelLastSignalUtc = DateTime.UtcNow;
 
                 if (Elapsed > WorldTravelTimeout)
@@ -452,10 +474,21 @@ public sealed class MarketBuyRunner : IDisposable
                     FailOrder("Timed out travelling to the target world.");
                     return;
                 }
-                if (DateTime.UtcNow - worldTravelLastSignalUtc > WorldTravelQuiet)
+
+                // Once the world hop has actually begun, be patient (the DC queue
+                // is slow). Before that, a short silence means the teleport was
+                // cancelled — retry it.
+                var quiet = inTransit ? WorldTravelQuiet : TravelAttemptQuiet;
+                if (DateTime.UtcNow - worldTravelLastSignalUtc > quiet)
                 {
                     Lifestream.Abort();
-                    FailOrder("World travel stalled — Lifestream produced no progress.");
+                    var why = GameState.GetTeleportBlock() ?? "the teleport didn't start";
+                    if (!inTransit && TravelRetryOrGiveUp(why))
+                    {
+                        Goto(Phase.WorldTravel);
+                        return;
+                    }
+                    FailOrder($"World travel failed ({why}).");
                     return;
                 }
                 return;
@@ -471,6 +504,13 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
+                if (!TravelCanFire(out var rhHard, out _))
+                {
+                    if (rhHard)
+                        FinishOrder(OrderState.Completed, "Completed (could not return home — kept getting blocked).");
+                    return;
+                }
+
                 var home = Worlds.ById(homeWorldId);
                 if (home is null || !Lifestream.ChangeWorld(home.Name))
                 {
@@ -478,9 +518,11 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
+                travelAttempt++;
                 targetWorldId = homeWorldId;
                 worldTravelStartWorld = Worlds.CurrentWorld()?.Id ?? 0;
                 worldTravelLastSignalUtc = DateTime.UtcNow;
+                travelRetryAtUtc = default;
                 Log?.Invoke($"Returning to home world {home.Name}…");
                 Goto(Phase.ReturnHomeWait);
                 return;
@@ -495,12 +537,24 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
-                if (Lifestream.IsBusy() || GameState.IsBetweenAreas || nowWorld != worldTravelStartWorld)
+                var rhTransit = nowWorld != worldTravelStartWorld || GameState.IsBetweenAreas;
+                if (Lifestream.IsBusy() || rhTransit)
                     worldTravelLastSignalUtc = DateTime.UtcNow;
 
-                if (Elapsed > WorldTravelTimeout || DateTime.UtcNow - worldTravelLastSignalUtc > WorldTravelQuiet)
+                if (Elapsed > WorldTravelTimeout)
                 {
                     Lifestream.Abort();
+                    FinishOrder(OrderState.Completed, "Completed (the return-home trip did not finish).");
+                    return;
+                }
+                if (DateTime.UtcNow - worldTravelLastSignalUtc > (rhTransit ? WorldTravelQuiet : TravelAttemptQuiet))
+                {
+                    Lifestream.Abort();
+                    if (!rhTransit && TravelRetryOrGiveUp(GameState.GetTeleportBlock() ?? "the teleport didn't start"))
+                    {
+                        Goto(Phase.ReturnHome);
+                        return;
+                    }
                     FinishOrder(OrderState.Completed, "Completed (the return-home trip did not finish).");
                     return;
                 }
@@ -535,6 +589,7 @@ public sealed class MarketBuyRunner : IDisposable
                         && Plugin.Instance.Configuration.UseLifestreamTravel
                         && Lifestream.Available)
                     {
+                        BeginTravelRetries();
                         ThinkThen(HumanTiming.DecideToTravel(), Phase.TravelToBoard, "decide-travel");
                         return;
                     }
@@ -606,6 +661,15 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
+                // Wait out the retry backoff and any teleport-blocking condition.
+                if (!TravelCanFire(out var hardBlock, out var blockReason))
+                {
+                    if (hardBlock)
+                        StopItem(StopReason.TravelFailed,
+                            $"Still {blockReason} after retrying for {Plugin.Instance.Configuration.TravelRetrySeconds}s.");
+                    return;
+                }
+
                 var arg = city?.LifestreamArg ?? "mb";
                 var dest = city is null ? "a Market Board (\"/li mb\")" : $"the {city.Display} Market Board";
                 travelDestLabel = city is null ? null : $"{city.Display}";
@@ -616,13 +680,15 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
+                travelAttempt++;
                 triedLifestreamThisItem = true;
                 lifestreamTravelActive = true;
                 travelStartTerritory = GameState.TerritoryId;
                 travelLastPos = GameState.PlayerPosition();
                 travelLastSignalUtc = DateTime.UtcNow;
                 travelArrivedUtc = default;
-                Log?.Invoke($"No board nearby — travelling to {dest}.");
+                travelRetryAtUtc = default;
+                Log?.Invoke($"{(travelAttempt > 1 ? $"Retry {travelAttempt - 1}: " : "No board nearby — ")}travelling to {dest}.");
                 Goto(Phase.TravelWait);
                 return;
             }
@@ -696,12 +762,19 @@ public sealed class MarketBuyRunner : IDisposable
                 }
                 travelArrivedUtc = default;
 
-                // No sign of travel for a long stretch — it never started or stalled.
-                if (DateTime.UtcNow - travelLastSignalUtc > TravelQuietPeriod)
+                // This attempt shows no sign of travel — treat it as failed and
+                // retry (combat / movement can cancel the teleport cast).
+                if (DateTime.UtcNow - travelLastSignalUtc > TravelAttemptQuiet)
                 {
+                    if (lifestreamTravelActive) Lifestream.Abort();
                     lifestreamTravelActive = false;
-                    StopItem(StopReason.TravelFailed,
-                        "Lifestream never started travelling (is the destination attuned?).");
+                    var why = GameState.GetTeleportBlock() ?? "the teleport didn't start";
+                    if (TravelRetryOrGiveUp(why))
+                    {
+                        Goto(Phase.TravelToBoard);
+                        return;
+                    }
+                    StopItem(StopReason.TravelFailed, $"Travel to a Market Board kept failing ({why}).");
                     return;
                 }
 
@@ -1127,6 +1200,73 @@ public sealed class MarketBuyRunner : IDisposable
             recorder.RunnerEvent("phase", new() { ["from"] = phase.ToString(), ["to"] = next.ToString() });
         phase = next;
         phaseEnteredUtc = DateTime.UtcNow;
+    }
+
+    // ---- teleport retry -----------------------------------------------
+
+    /// <summary>Start a fresh retry budget for one travel leg (city, world, or return-home).</summary>
+    private void BeginTravelRetries()
+    {
+        travelAttempt = 0;
+        travelRetryAtUtc = default;
+        travelBlockNoticeShown = false;
+        travelDeadlineUtc = DateTime.UtcNow
+            + TimeSpan.FromSeconds(Math.Max(0, Plugin.Instance.Configuration.TravelRetrySeconds));
+    }
+
+    /// <summary>
+    /// In a "fire the travel command" phase: returns true when the caller may
+    /// dispatch now. Returns false while backing off from a retry or waiting out
+    /// a teleport-blocking condition (combat, occupied, …). Sets
+    /// <paramref name="hardBlock"/> when the budget is spent and the caller
+    /// should fail.
+    /// </summary>
+    private bool TravelCanFire(out bool hardBlock, out string blockReason)
+    {
+        hardBlock = false;
+        blockReason = string.Empty;
+
+        if (travelRetryAtUtc != default && DateTime.UtcNow < travelRetryAtUtc)
+            return false;
+
+        var block = GameState.GetTeleportBlock();
+        if (block is null)
+        {
+            travelBlockNoticeShown = false;
+            return true;
+        }
+
+        blockReason = block;
+        if (travelAttempt > 0 && DateTime.UtcNow >= travelDeadlineUtc)
+        {
+            hardBlock = true;
+            return false;
+        }
+
+        if (!travelBlockNoticeShown)
+        {
+            travelBlockNoticeShown = true;
+            Plugin.ChatGui.Print($"[Emptor] Can't teleport while {block} — waiting…");
+            Log?.Invoke($"Travel held: {block}.");
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// In a travel "wait" phase, once an attempt is judged to have failed:
+    /// announces + schedules a 5s retry and returns true, or returns false when
+    /// the retry budget is spent (caller fails terminally).
+    /// </summary>
+    private bool TravelRetryOrGiveUp(string reason)
+    {
+        if (DateTime.UtcNow >= travelDeadlineUtc)
+            return false;
+
+        var secs = (int)TravelRetryDelay.TotalSeconds;
+        Plugin.ChatGui.Print($"[Emptor] Teleport failed ({reason}) — retrying in {secs}s…");
+        Log?.Invoke($"Travel attempt {travelAttempt} failed ({reason}); retrying in {secs}s.");
+        travelRetryAtUtc = DateTime.UtcNow + TravelRetryDelay;
+        return true;
     }
 
     private void ThinkThen(TimeSpan delay, Phase next, string reason)

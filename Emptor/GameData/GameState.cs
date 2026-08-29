@@ -26,6 +26,31 @@ public static class GameState
         ConditionFlag.OccupiedInQuestEvent,
     };
 
+    /// <summary>
+    /// Conditions that abort or block an aetheryte teleport (the thing Lifestream
+    /// does to reach a board / world). Returns the flag name, or null if clear.
+    /// </summary>
+    private static readonly ConditionFlag[] TeleportBlockingConditions =
+    {
+        ConditionFlag.InCombat,
+        ConditionFlag.Occupied,
+        ConditionFlag.Occupied30,
+        ConditionFlag.OccupiedInEvent,
+        ConditionFlag.OccupiedInQuestEvent,
+        ConditionFlag.Crafting,
+        ConditionFlag.Gathering,
+    };
+
+    public static string? GetTeleportBlock()
+    {
+        if (!Plugin.ClientState.IsLoggedIn)
+            return "not logged in";
+        foreach (var flag in TeleportBlockingConditions)
+            if (Plugin.Condition[flag])
+                return flag.ToString();
+        return null;
+    }
+
     /// <summary>Null when it is fine to act, otherwise a human-readable reason.</summary>
     public static string? GetBlockReason()
     {

@@ -152,6 +152,10 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
 - `returnToHomeWorld` (optional, default `false`) → after a `world` hop, travel
   back to the home world once the order finishes.
 
+If a teleport is cancelled (combat, movement, …) Emptor announces it in chat and
+keeps retrying every 5 s for `TravelRetrySeconds` (default 30) before it gives up
+with `travelFailed`.
+
 The three stop conditions a caller usually cares about map directly onto the
 request: **max count** = `quantity`, **max total gil** = `totalGilBudget`, **max
 price each** = `maxUnitPrice`. The result's `stoppedReason` says which one
