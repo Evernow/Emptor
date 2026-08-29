@@ -190,9 +190,63 @@ triggered, and `nextLowestUnitPrice` is what the next unit would have cost.
 }
 ```
 
-`stoppedReason` ∈ `quantityMet | priceExceeded | noListings | budgetExceeded |
-overshoot | promptMismatch | blocked | cancelled | indeterminate | itemUnresolved
-| openFailed | searchFailed | noBoardInZone | travelFailed`.
+### Errors & non-success responses
+
+**No IPC gate throws.** Every failure comes back inside the JSON string you
+already parse — inspect the discriminator, don't wrap calls in try/catch for
+Emptor's sake. (Dalamud itself throws `IpcNotReadyError` if Emptor isn't loaded;
+call `Emptor.ApiVersion` first, or check the installed-plugins list.)
+`ApiVersion`, `IsBusy` and `GetCities` always return a value.
+
+**`SubmitOrder` rejection** — `{ "state": "rejected", "message": "…" }` with **no
+`orderId`**. Test for `orderId` / `state == "rejected"`. Causes:
+
+| `message` | Meaning |
+|---|---|
+| `Invalid request JSON: …` | payload didn't parse |
+| `Request had no items.` | `items` missing or empty |
+| `Could not resolve item '…'.` | `itemName` matched no marketable item and no valid `itemId` given |
+| `Item <id> is not marketable.` | the `itemId` exists but has no market-board category |
+| `maxUnitPrice and quantity must be >= 0.` | negative number in an item |
+| `Unknown city '…'. Known: …` | `city` isn't a key/name from `GetCities` |
+| `Unknown world '…'.` | `world` isn't a real world name/id |
+| `World '…' (…) is not reachable — …` | `world` is outside the character's home region + Materia |
+
+**Order terminal `state`** — `queued` · `running` · `completed` · `cancelled` ·
+`rejected` · `failed`.
+
+- **`completed`** — the runner reached the end of the list. This does **not** mean
+  everything was bought: check each item's `purchasedQuantity` and `stoppedReason`.
+  A single-item order that never reached a board is still `completed` with
+  `purchasedQuantity: 0`.
+- **`failed`** — the whole order aborted (mostly world-travel problems or an
+  internal error); `message` says why. E.g. `This order pins a world, but
+  Lifestream is not installed.` · `<World> (<DC>) isn't reachable — …` · `Lifestream
+  can't currently travel to <World> …` · `Still <condition> after retrying world
+  travel for <N>s.` · `Timed out travelling to the target world.` · `Internal
+  error: …` (a bug — please report).
+- **`cancelled`** — `CancelOrder` was called, or the plugin unloaded mid-order.
+- **`rejected`** — only ever from `SubmitOrder`; an order never becomes `rejected` later.
+
+**Per-item `stoppedReason`** (camelCase; set on every item once the order is terminal):
+
+| group | values | check next |
+|---|---|---|
+| bought everything | `quantityMet` | — |
+| reached the board, bought 0–some | `priceExceeded`, `noListings`, `budgetExceeded`, `overshoot` | `purchasedQuantity`, `listingsExhausted`, `nextLowestUnitPrice` |
+| couldn't reach a board | `noBoardInZone`, `travelFailed`, `openFailed` | market unknown — retry later / elsewhere |
+| purchase went wrong | `searchFailed`, `promptMismatch`, `indeterminate` | usually transient — retry (for `indeterminate`, check inventory first — a buy packet went out but wasn't confirmed) |
+| precondition failed | `itemUnresolved`, `blocked` | bad name / stuck in a blocking condition too long |
+| caller asked | `cancelled` | — |
+| `none` | item never ran (shouldn't happen on a terminal order) | |
+
+**`GetOrder`** — unknown id → `{ "state": "rejected", "message": "No order with id
+'…'." }`. Only the last ~50 finished orders are kept.
+
+**`CancelOrder`** — `bool`: `true` if cancelled / stop requested, `false` if the id
+is unknown or the order already finished.
+
+**`GetReachableWorlds`** — `{ "error": "Not logged in." }` with no character loaded.
 
 ### Example caller
 
@@ -255,6 +309,14 @@ background fetch runs — call again in ~1 s for those.
 A `world` query returns world + DC + region levels; a `datacenter` query returns
 DC + region; `region` and `reachable` return the region level (`reachable` merges
 the cheapest across the region and Materia).
+
+**`LookupPrices` errors.** Reply-level `error` (whole call failed, no `items`):
+`Invalid JSON: …` · `No items.` · `Item '…' is not a marketable item.` · `Unknown
+world '…'` / `Unknown data centre '…'` / `Unknown region '…'` (bad `target` for the
+scope) · `Not logged in.` (`reachable`/omitted scope with no character). A
+per-**item** `error` means just that item resolved but has no data: `Universalis
+unavailable.` (every HTTP call failed — retry) or `No market data for this item at
+that scope.` `LookupPrices` never throws.
 
 ## Status
 
