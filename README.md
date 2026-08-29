@@ -49,9 +49,9 @@ Per shopping-list item the runner:
    - use **Lifestream** to travel to a board — `/li mb` (Ul'dah) by default, or a
      specific city's board when the request pins one (see `city` below),
    then interact. It never opens the board UI "cold" — if it still can't reach a
-   real board the order stops (`noBoardInZone` / `travelFailed`). With
+   real board the order stops (`NoBoardInZone` / `TravelFailed`). With
    `skipTravel: true` it skips all of that and only uses a board it is already
-   standing at (`openFailed` otherwise).
+   standing at (`OpenFailed` otherwise).
 2. Focuses the search box and types the item name with real keystrokes, then
    presses Enter. (Nothing else triggers the client's search.)
 3. Clicks the item in the results to open its listings.
@@ -124,7 +124,7 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
   centre is still the caller's job.
 - `skipTravel: true` → the caller has already put the character at a Market Board.
   Emptor won't pathfind or travel — it interacts with a board already in range
-  and stops with `openFailed` otherwise.
+  and stops with `OpenFailed` otherwise.
 - `city` (optional) → pin travel to one city's Market Board instead of the `/li mb`
   default (Ul'dah). Accepts the key or the display name (case-insensitive), e.g.
   `"kugane"` or `"Kugane"`. Market Board listings are world-wide identical, so this
@@ -155,7 +155,7 @@ Prefix `Emptor.`. All payloads are JSON strings. Job-based: submit, then poll.
 
 If a teleport is cancelled (combat, movement, …) Emptor announces it in chat and
 keeps retrying every 5 s for `TravelRetrySeconds` (default 30) before it gives up
-with `travelFailed`.
+with `TravelFailed`.
 
 The three stop conditions a caller usually cares about map directly onto the
 request: **max count** = `quantity`, **max total gil** = `totalGilBudget`, **max
@@ -185,7 +185,7 @@ triggered, and `nextLowestUnitPrice` is what the next unit would have cost.
     "nextLowestQuantity": 12,
     "nextLowestHq": false,
     "listingsExhausted": false,
-    "stoppedReason": "quantityMet"
+    "stoppedReason": "QuantityMet"
   }]
 }
 ```
@@ -228,17 +228,19 @@ call `Emptor.ApiVersion` first, or check the installed-plugins list.)
 - **`cancelled`** — `CancelOrder` was called, or the plugin unloaded mid-order.
 - **`rejected`** — only ever from `SubmitOrder`; an order never becomes `rejected` later.
 
-**Per-item `stoppedReason`** (camelCase; set on every item once the order is terminal):
+**Per-item `stoppedReason`** — the raw enum name, **PascalCase** (unlike `state`,
+which is lowercased). Set on every item once the order is terminal. Match it
+case-insensitively to be safe.
 
 | group | values | check next |
 |---|---|---|
-| bought everything | `quantityMet` | — |
-| reached the board, bought 0–some | `priceExceeded`, `noListings`, `budgetExceeded`, `overshoot` | `purchasedQuantity`, `listingsExhausted`, `nextLowestUnitPrice` |
-| couldn't reach a board | `noBoardInZone`, `travelFailed`, `openFailed` | market unknown — retry later / elsewhere |
-| purchase went wrong | `searchFailed`, `promptMismatch`, `indeterminate` | usually transient — retry (for `indeterminate`, check inventory first — a buy packet went out but wasn't confirmed) |
-| precondition failed | `itemUnresolved`, `blocked` | bad name / stuck in a blocking condition too long |
-| caller asked | `cancelled` | — |
-| `none` | item never ran (shouldn't happen on a terminal order) | |
+| bought everything | `QuantityMet` | — |
+| reached the board, bought 0–some | `PriceExceeded`, `NoListings`, `BudgetExceeded`, `Overshoot` | `purchasedQuantity`, `listingsExhausted`, `nextLowestUnitPrice` |
+| couldn't reach a board | `NoBoardInZone`, `TravelFailed`, `OpenFailed` | market unknown — retry later / elsewhere |
+| purchase went wrong | `SearchFailed`, `PromptMismatch`, `Indeterminate` | usually transient — retry (for `Indeterminate`, check inventory first — a buy packet went out but wasn't confirmed) |
+| precondition failed | `ItemUnresolved`, `Blocked` | bad name / stuck in a blocking condition too long |
+| caller asked | `Cancelled` | — |
+| `None` | item never ran (shouldn't happen on a terminal order) | |
 
 **`GetOrder`** — unknown id → `{ "state": "rejected", "message": "No order with id
 '…'." }`. Only the last ~50 finished orders are kept.

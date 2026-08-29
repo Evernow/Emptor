@@ -279,10 +279,6 @@ public sealed class EmptorIpc : IDisposable
 
     // ---- mapping -----------------------------------------------------
 
-    /// <summary>PascalCase enum name → camelCase, to match the rest of the JSON.</summary>
-    private static string Camel(string s)
-        => s.Length > 0 ? char.ToLowerInvariant(s[0]) + s[1..] : s;
-
     private static OrderDto ToDto(BuyOrder o) => new()
     {
         OrderId = o.OrderId,
@@ -314,7 +310,7 @@ public sealed class EmptorIpc : IDisposable
             NextLowestQuantity = r.NextLowestQuantity,
             NextLowestHq = r.NextLowestHq,
             ListingsExhausted = r.ListingsExhausted,
-            StoppedReason = Camel(r.StoppedReason.ToString()),
+            StoppedReason = r.StoppedReason.ToString(),
             AvailableListings = r.AvailableListings?.Select(p => new PurchaseDto
             {
                 UnitPrice = p.UnitPrice,
