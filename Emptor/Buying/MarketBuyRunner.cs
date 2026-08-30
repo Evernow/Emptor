@@ -354,6 +354,17 @@ public sealed class MarketBuyRunner : IDisposable
                 }
                 worldTravelDone = true;
 
+                // Board still open at a real board (a multi-item order carrying
+                // on): the "occupied in event" flags are just the open board, not
+                // a real block — go straight to the next search. This check must
+                // come BEFORE GetBlockReason(), which counts an open board as a
+                // block and would otherwise strand a multi-item order.
+                if (BoardReadyForNextSearch())
+                {
+                    ThinkThen(HumanTiming.OrientAfterOpen(), Phase.PrepSearch, "orient");
+                    return;
+                }
+
                 if (GameState.GetBlockReason() is { } block && !PlayerActions.IsMounted)
                 {
                     Log?.Invoke($"Blocked: {block}");
@@ -361,16 +372,6 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
-                // Skip straight to searching ONLY if the board is open AND we can
-                // see a real Market Board object right next to us (e.g. a
-                // multi-item order where item 1 already opened it). A stale board
-                // window with no board nearby is NOT good enough — go locate one.
-                if (MarketBoardUi.IsBoardOpen() &&
-                    MarketBoardLocator.FindNearest(MarketBoardLocator.InteractDistance + 1.5f) is not null)
-                {
-                    ThinkThen(HumanTiming.OrientAfterOpen(), Phase.PrepSearch, "orient");
-                    return;
-                }
                 Goto(PlayerActions.IsMounted ? Phase.Dismount : Phase.LocateBoard);
                 return;
             }
@@ -378,6 +379,13 @@ public sealed class MarketBuyRunner : IDisposable
             case Phase.BlockedWait:
             {
                 if (CancelledNow()) { StopItem(StopReason.Cancelled, "Cancelled while blocked."); return; }
+                // If the board opened / is still open at a real board and we're
+                // not in combat, the block is just the board — carry on.
+                if (BoardReadyForNextSearch())
+                {
+                    ThinkThen(HumanTiming.OrientAfterOpen(), Phase.PrepSearch, "orient");
+                    return;
+                }
                 if (GameState.GetBlockReason() is null) { Goto(Phase.LocateBoard); return; }
                 if (Elapsed > BlockedTimeout) StopItem(StopReason.Blocked, "Still blocked after waiting.");
                 return;
@@ -1199,6 +1207,17 @@ public sealed class MarketBuyRunner : IDisposable
 
     private TimeSpan Elapsed => DateTime.UtcNow - phaseEnteredUtc;
 
+    /// <summary>
+    /// The Market Board window is open, a real board object is right next to us,
+    /// and we're not in combat — so the runner can go straight to a search
+    /// without re-interacting. An open board sets Occupied* condition flags that
+    /// <see cref="GameState.GetBlockReason"/> would otherwise treat as a block.
+    /// </summary>
+    private static bool BoardReadyForNextSearch()
+        => !GameState.InCombat
+           && MarketBoardUi.IsBoardOpen()
+           && MarketBoardLocator.FindNearest(MarketBoardLocator.InteractDistance + 1.5f) is not null;
+
     private void Goto(Phase next)
     {
         if (recorder.IsRecording && next != phase)
@@ -1334,7 +1353,14 @@ public sealed class MarketBuyRunner : IDisposable
         Log?.Invoke($"{result.ItemName}: {reason} — {message}");
         var more = itemIndex + 1 < order!.Request.Items.Count && !CancelledNow();
         if (more)
+        {
+            // Close the board so the next item starts from a clean state — an
+            // open board keeps the character "occupied in event", which the
+            // block check would otherwise read as stuck.
+            MarketBoardUi.DismissDialogs();
+            MarketBoardUi.HideBoard();
             ThinkThen(HumanTiming.BetweenItems(), Phase.ItemNext, "between-items");
+        }
         else
             Goto(Phase.ItemNext);
     }

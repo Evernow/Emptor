@@ -82,6 +82,13 @@ public static class GameState
     /// <summary>Current territory (zone) id. 0 when not in the world.</summary>
     public static uint TerritoryId => Plugin.ClientState.TerritoryType;
 
+    /// <summary>
+    /// True in combat. The only <see cref="GetBlockReason"/> condition that is a
+    /// real blocker once the Market Board is already open — the various
+    /// Occupied* flags are just the open board itself.
+    /// </summary>
+    public static bool InCombat => Plugin.Condition[ConditionFlag.InCombat];
+
     public static unsafe bool IsAddonReady(string name)
     {
         var addon = Plugin.GameGui.GetAddonByName<AtkUnitBase>(name, 1);
