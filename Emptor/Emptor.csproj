@@ -1,7 +1,7 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
 
   <PropertyGroup>
-    <Version>0.2.10.0</Version>
+    <Version>0.2.11.0</Version>
     <Description>Automated market board buyer: works a shopping list of items / quantities / price ceilings, with a Dalamud IPC API.</Description>
     <Authors>Evernow</Authors>
     <PackageProjectUrl>https://github.com/Evernow/Emptor</PackageProjectUrl>
