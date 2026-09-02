@@ -35,7 +35,7 @@ public sealed class MarketBuyRunner : IDisposable
     {
         Idle, ItemNext, ItemBegin, BlockedWait,
         WorldTravel, WorldTravelWait, ReturnHome, ReturnHomeWait,
-        Dismount, LocateBoard, TravelToBoard, TravelWait, ApproachAnchor, NavigateBoard, InteractBoard, BoardOpenWait,
+        Dismount, LocateBoard, TravelToBoard, TravelWait, ApproachAnchor, NavmeshWait, NavigateBoard, InteractBoard, BoardOpenWait,
         Think,
         PrepSearch, TypeSearch, SubmitSearch, SearchWait,
         OpenListings, ClickResultRow, ListingsWait, Read,
@@ -61,6 +61,11 @@ public sealed class MarketBuyRunner : IDisposable
     // as failed (a real teleport cast is ~5 s of silence for "/li tp").
     private static readonly TimeSpan TravelAttemptQuiet = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan TravelRetryDelay = TimeSpan.FromSeconds(5);
+    // Lifestream must look idle this long before we grab a board object — rides
+    // out the gap between its teleport / aethernet / walk sub-tasks.
+    private static readonly TimeSpan LifestreamSettle = TimeSpan.FromSeconds(2.5);
+    // The zone navmesh takes a few seconds to build right after a teleport.
+    private static readonly TimeSpan NavmeshBuildTimeout = TimeSpan.FromSeconds(30);
 
     private readonly PurchaseConfirmationWatcher watcher = new();
     private readonly BehaviorRecorder recorder;
@@ -92,6 +97,7 @@ public sealed class MarketBuyRunner : IDisposable
     private Vector3 travelLastPos;
     private DateTime travelLastSignalUtc;
     private DateTime travelArrivedUtc;
+    private DateTime lifestreamLastBusyUtc;
     private Vector3 anchorTarget;
 
     // world / DC travel (order-scoped)
@@ -176,6 +182,7 @@ public sealed class MarketBuyRunner : IDisposable
         Phase.TravelToBoard => travelDestLabel is null ? "Heading to a Market Board…" : $"Heading to {travelDestLabel}…",
         Phase.TravelWait => travelDestLabel is null ? "Travelling to a Market Board…" : $"Travelling to {travelDestLabel}…",
         Phase.ApproachAnchor => "Walking to the Market Board area…",
+        Phase.NavmeshWait => "Waiting for vnavmesh to build the zone…",
         Phase.NavigateBoard => "Walking to the Market Board…",
         Phase.InteractBoard => "Opening the Market Board…",
         Phase.BoardOpenWait => "Waiting for the Market Board window…",
@@ -640,8 +647,16 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
-                if (Plugin.Instance.Configuration.UseNavigation && Navigation.Available && Navigation.IsReady())
+                if (Plugin.Instance.Configuration.UseNavigation && Navigation.Available)
                 {
+                    if (!Navigation.IsReady())
+                    {
+                        // Right after a teleport the zone navmesh is still
+                        // building — wait for it rather than giving up.
+                        Log?.Invoke($"Market Board is {dist:0}y away — waiting for vnavmesh to build…");
+                        Goto(Phase.NavmeshWait);
+                        return;
+                    }
                     boardApproachStartPos = GameState.PlayerPosition();
                     Navigation.MoveCloseTo(board.Position, 3.4f);
                     Goto(Phase.NavigateBoard);
@@ -649,6 +664,33 @@ public sealed class MarketBuyRunner : IDisposable
                 }
 
                 StopItem(StopReason.OpenFailed, $"Nearest Market Board is {dist:0}y away — walk to it or enable navigation.");
+                return;
+            }
+
+            case Phase.NavmeshWait:
+            {
+                if (CancelledNow()) { StopItem(StopReason.Cancelled, "Cancelled while waiting for vnavmesh."); return; }
+
+                // Lifestream may still be finishing its walk in the background —
+                // if it gets us there, don't also start our own navigation.
+                if (BoardReadyForNextSearch())
+                {
+                    ThinkThen(HumanTiming.OrientAfterOpen(), Phase.PrepSearch, "orient");
+                    return;
+                }
+                if (Lifestream.IsBusy())
+                {
+                    phaseEnteredUtc = DateTime.UtcNow; // don't time out while Lifestream works
+                    return;
+                }
+                if (MarketBoardLocator.FindNearest(MarketBoardLocator.InteractDistance) is not null
+                    || Navigation.IsReady())
+                {
+                    Goto(Phase.LocateBoard);
+                    return;
+                }
+                if (Elapsed > NavmeshBuildTimeout)
+                    StopItem(StopReason.OpenFailed, "vnavmesh never became ready — walk to the Market Board.");
                 return;
             }
 
@@ -699,6 +741,7 @@ public sealed class MarketBuyRunner : IDisposable
                 travelStartTerritory = GameState.TerritoryId;
                 travelLastPos = GameState.PlayerPosition();
                 travelLastSignalUtc = DateTime.UtcNow;
+                lifestreamLastBusyUtc = DateTime.UtcNow;
                 travelArrivedUtc = default;
                 travelRetryAtUtc = default;
                 Log?.Invoke($"{(travelAttempt > 1 ? $"Retry {travelAttempt - 1}: " : "No board nearby — ")}travelling to {dest}.");
@@ -716,14 +759,24 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
-                // A board is in reach — hand back to LocateBoard. But NOT while
-                // Lifestream is still working: "/li mb" and the aethernet routes
-                // teleport, then aethernet-hop, then walk the last stretch (and
-                // "/li mb" opens the board itself). Grabbing the board object the
-                // instant it streams in — often 100+ y away, across an aethernet
-                // gap — strands us with no navmesh path ("openFailed"). "/li tp"
-                // routes never set IsBusy, so those still hand off immediately.
-                if (!Lifestream.IsBusy()
+                if (Lifestream.IsBusy())
+                    lifestreamLastBusyUtc = DateTime.UtcNow;
+
+                // "/li mb" opens the board itself — take it the moment it's up.
+                if (MarketBoardUi.IsBoardOpen()
+                    && MarketBoardLocator.FindNearest(MarketBoardLocator.InteractDistance + 3f) is not null)
+                {
+                    lifestreamTravelActive = false;
+                    Goto(Phase.LocateBoard);
+                    return;
+                }
+
+                // Otherwise wait for Lifestream to have been idle a moment (it
+                // teleports, then aethernet-hops, then walks — grabbing the board
+                // object between those sub-tasks strands us 100+ y away with no
+                // navmesh path). "/li tp" routes never set IsBusy, so they clear
+                // this after ~2.5 s and LocateBoard does the vnav walk.
+                if (DateTime.UtcNow - lifestreamLastBusyUtc > LifestreamSettle
                     && MarketBoardLocator.FindNearest(MarketBoardLocator.NavigateSearchRadius) is not null)
                 {
                     lifestreamTravelActive = false;
