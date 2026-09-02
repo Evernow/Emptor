@@ -716,9 +716,15 @@ public sealed class MarketBuyRunner : IDisposable
                     return;
                 }
 
-                // Success: a board is in reach — hand back to LocateBoard, which
-                // interacts or does a short vnav hop.
-                if (MarketBoardLocator.FindNearest(MarketBoardLocator.NavigateSearchRadius) is not null)
+                // A board is in reach — hand back to LocateBoard. But NOT while
+                // Lifestream is still working: "/li mb" and the aethernet routes
+                // teleport, then aethernet-hop, then walk the last stretch (and
+                // "/li mb" opens the board itself). Grabbing the board object the
+                // instant it streams in — often 100+ y away, across an aethernet
+                // gap — strands us with no navmesh path ("openFailed"). "/li tp"
+                // routes never set IsBusy, so those still hand off immediately.
+                if (!Lifestream.IsBusy()
+                    && MarketBoardLocator.FindNearest(MarketBoardLocator.NavigateSearchRadius) is not null)
                 {
                     lifestreamTravelActive = false;
                     Goto(Phase.LocateBoard);
