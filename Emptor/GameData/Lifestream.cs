@@ -30,7 +30,12 @@ public static class Lifestream
     /// </summary>
     public static bool RunLiCommand(string args)
     {
-        try { return Plugin.CommandManager.ProcessCommand("/li " + args); }
+        try
+        {
+            var ok = Plugin.CommandManager.ProcessCommand("/li " + args);
+            Plugin.Log.Information($"[Emptor] dispatched \"/li {args}\" -> handled={ok}, IsBusy={IsBusy()}");
+            return ok;
+        }
         catch (Exception ex)
         {
             Plugin.Log.Warning(ex, $"[Emptor] \"/li {args}\" dispatch failed.");

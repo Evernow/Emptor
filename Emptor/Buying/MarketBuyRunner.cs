@@ -264,6 +264,13 @@ public sealed class MarketBuyRunner : IDisposable
         if (recorder.IsRecording)
             recorder.RunnerEvent("order-start", new() { ["orderId"] = order.OrderId, ["items"] = order.Request.Items.Count });
 
+        var r = order.Request;
+        var items = string.Join(", ", r.Items.Select(i =>
+            $"{(i.ItemId != 0 ? i.ItemId.ToString() : i.ItemName)} x{i.Quantity} <={i.MaxUnitPrice}g {i.Quality}/{i.Overshoot}"));
+        Plugin.Log.Information(
+            $"[Emptor] ORDER {order.OrderId} start: {r.Items.Count} item(s) [{items}] "
+            + $"budget={r.TotalGilBudget}g skipTravel={r.SkipTravel} city={r.City ?? "(default)"} world={r.World ?? "(current)"} "
+            + $"returnHome={r.ReturnToHomeWorld} fromUi={order.FromUi}. {Snap()}");
         Log?.Invoke($"Order {order.OrderId} started with {order.Request.Items.Count} item(s).");
         return null;
     }
@@ -592,6 +599,7 @@ public sealed class MarketBuyRunner : IDisposable
             case Phase.LocateBoard:
             {
                 var skip = order!.Request.SkipTravel;
+                Diag($"LocateBoard: {Snap()}");
 
                 // Only ever look for a board we could actually reach. With
                 // skipTravel we require one we're basically standing at — never
@@ -601,6 +609,8 @@ public sealed class MarketBuyRunner : IDisposable
 
                 if (board is null)
                 {
+                    Diag($"LocateBoard: no board within {(skip ? "interact" : "200y")} range "
+                         + $"(triedLifestream={triedLifestreamThisItem}, skip={skip})");
                     // Nothing in range. If travel is allowed and Lifestream is
                     // here, ride it to the (optionally pinned) city's board, then
                     // come back through LocateBoard to interact with it.
@@ -626,6 +636,8 @@ public sealed class MarketBuyRunner : IDisposable
                 }
 
                 var dist = MarketBoardLocator.DistanceTo(board) ?? 999f;
+                Diag($"LocateBoard: board \"{board.Name.TextValue}\" is {dist:0}y away (interact<={MarketBoardLocator.InteractDistance:0.#})");
+
                 if (dist <= MarketBoardLocator.InteractDistance)
                 {
                     // Standing at a real board. If its window is already up (a
@@ -633,9 +645,11 @@ public sealed class MarketBuyRunner : IDisposable
                     // shut. Otherwise interact to open it.
                     if (MarketBoardUi.IsBoardOpen())
                     {
+                        Diag("LocateBoard: at the board, window already open -> search");
                         ThinkThen(HumanTiming.OrientAfterOpen(), Phase.PrepSearch, "orient");
                         return;
                     }
+                    Diag("LocateBoard: at the board -> interact");
                     boardApproachStartPos = GameState.PlayerPosition();
                     ThinkThen(HumanTiming.BeforeInteractBoard(), Phase.InteractBoard, "before-interact");
                     return;
@@ -653,16 +667,18 @@ public sealed class MarketBuyRunner : IDisposable
                     {
                         // Right after a teleport the zone navmesh is still
                         // building — wait for it rather than giving up.
-                        Log?.Invoke($"Market Board is {dist:0}y away — waiting for vnavmesh to build…");
+                        Diag($"LocateBoard: board {dist:0}y away, vnavmesh not ready -> NavmeshWait");
                         Goto(Phase.NavmeshWait);
                         return;
                     }
+                    Diag($"LocateBoard: board {dist:0}y away, vnavmesh ready -> walk (NavigateBoard)");
                     boardApproachStartPos = GameState.PlayerPosition();
                     Navigation.MoveCloseTo(board.Position, 3.4f);
                     Goto(Phase.NavigateBoard);
                     return;
                 }
 
+                Diag($"LocateBoard: board {dist:0}y away, navigation unavailable/disabled -> openFailed");
                 StopItem(StopReason.OpenFailed, $"Nearest Market Board is {dist:0}y away — walk to it or enable navigation.");
                 return;
             }
@@ -675,22 +691,34 @@ public sealed class MarketBuyRunner : IDisposable
                 // if it gets us there, don't also start our own navigation.
                 if (BoardReadyForNextSearch())
                 {
+                    Diag("NavmeshWait: board is open at a real board -> search");
                     ThinkThen(HumanTiming.OrientAfterOpen(), Phase.PrepSearch, "orient");
                     return;
                 }
                 if (Lifestream.IsBusy())
                 {
+                    Heartbeat("Lifestream still working — holding");
                     phaseEnteredUtc = DateTime.UtcNow; // don't time out while Lifestream works
                     return;
                 }
-                if (MarketBoardLocator.FindNearest(MarketBoardLocator.InteractDistance) is not null
-                    || Navigation.IsReady())
+                if (MarketBoardLocator.FindNearest(MarketBoardLocator.InteractDistance) is not null)
                 {
+                    Diag("NavmeshWait: a board came into interact range -> LocateBoard");
                     Goto(Phase.LocateBoard);
                     return;
                 }
+                if (Navigation.IsReady())
+                {
+                    Diag($"NavmeshWait: vnavmesh ready after {(long)Elapsed.TotalSeconds}s -> LocateBoard");
+                    Goto(Phase.LocateBoard);
+                    return;
+                }
+                Heartbeat($"vnavmesh not ready yet. {Snap()}");
                 if (Elapsed > NavmeshBuildTimeout)
+                {
+                    Diag($"NavmeshWait: vnavmesh never ready after {NavmeshBuildTimeout.TotalSeconds:0}s. {Snap()}");
                     StopItem(StopReason.OpenFailed, "vnavmesh never became ready — walk to the Market Board.");
+                }
                 return;
             }
 
@@ -729,6 +757,9 @@ public sealed class MarketBuyRunner : IDisposable
                 var dest = city is null ? "a Market Board (\"/li mb\")" : $"the {city.Display} Market Board";
                 travelDestLabel = city is null ? null : $"{city.Display}";
 
+                Diag($"TravelToBoard: city={city?.Key ?? "(default)"} route={city?.RouteKind.ToString() ?? "LiMarketBoard"} "
+                     + $"cmd=\"/li {arg}\" attempt={travelAttempt + 1}. {Snap()}");
+
                 if (!Lifestream.RunLiCommand(arg))
                 {
                     StopItem(StopReason.TravelFailed, $"Could not dispatch \"/li {arg}\" (is Lifestream loaded?).");
@@ -762,10 +793,13 @@ public sealed class MarketBuyRunner : IDisposable
                 if (Lifestream.IsBusy())
                     lifestreamLastBusyUtc = DateTime.UtcNow;
 
+                Heartbeat($"lsIdle={(long)(DateTime.UtcNow - lifestreamLastBusyUtc).TotalMilliseconds}ms. {Snap()}");
+
                 // "/li mb" opens the board itself — take it the moment it's up.
                 if (MarketBoardUi.IsBoardOpen()
                     && MarketBoardLocator.FindNearest(MarketBoardLocator.InteractDistance + 3f) is not null)
                 {
+                    Diag("TravelWait: board opened at a real board -> LocateBoard");
                     lifestreamTravelActive = false;
                     Goto(Phase.LocateBoard);
                     return;
@@ -777,8 +811,10 @@ public sealed class MarketBuyRunner : IDisposable
                 // navmesh path). "/li tp" routes never set IsBusy, so they clear
                 // this after ~2.5 s and LocateBoard does the vnav walk.
                 if (DateTime.UtcNow - lifestreamLastBusyUtc > LifestreamSettle
-                    && MarketBoardLocator.FindNearest(MarketBoardLocator.NavigateSearchRadius) is not null)
+                    && MarketBoardLocator.FindNearest(MarketBoardLocator.NavigateSearchRadius) is { } arrivedBoard)
                 {
+                    Diag($"TravelWait: Lifestream idle {LifestreamSettle.TotalSeconds:0.#}s, board \"{arrivedBoard.Name.TextValue}\" "
+                         + $"{MarketBoardLocator.DistanceTo(arrivedBoard) ?? -1f:0}y away -> LocateBoard. {Snap()}");
                     lifestreamTravelActive = false;
                     Goto(Phase.LocateBoard);
                     return;
@@ -788,6 +824,7 @@ public sealed class MarketBuyRunner : IDisposable
                 {
                     if (lifestreamTravelActive) Lifestream.Abort();
                     lifestreamTravelActive = false;
+                    Diag($"TravelWait: timed out after {LifestreamTravelTimeout.TotalSeconds:0}s. {Snap()}");
                     StopItem(StopReason.TravelFailed, "Timed out travelling to a Market Board.");
                     return;
                 }
@@ -822,11 +859,12 @@ public sealed class MarketBuyRunner : IDisposable
                     {
                         anchorTarget = anchor;
                         Navigation.MoveCloseTo(anchor, 6f);
-                        Log?.Invoke($"No board object at the landing spot — walking to the known {city.Display} board area.");
+                        Diag($"TravelWait: arrived, no board loaded — walking to the known {city.Display} anchor. {Snap()}");
                         Goto(Phase.ApproachAnchor);
                         return;
                     }
 
+                    Diag($"TravelWait: arrived, no board loaded, no usable anchor. {Snap()}");
                     StopItem(StopReason.TravelFailed,
                         $"Reached {travelDestLabel ?? "the destination"} but no Market Board is in reach — "
                         + "the landing spot is too far from the board (needs a board anchor), or vnavmesh isn't ready.");
@@ -841,6 +879,7 @@ public sealed class MarketBuyRunner : IDisposable
                     if (lifestreamTravelActive) Lifestream.Abort();
                     lifestreamTravelActive = false;
                     var why = GameState.GetTeleportBlock() ?? "the teleport didn't start";
+                    Diag($"TravelWait: no travel signal for {TravelAttemptQuiet.TotalSeconds:0}s ({why}). {Snap()}");
                     if (TravelRetryOrGiveUp(why))
                     {
                         Goto(Phase.TravelToBoard);
@@ -891,9 +930,11 @@ public sealed class MarketBuyRunner : IDisposable
             {
                 if (CancelledNow()) { Navigation.Stop(); StopItem(StopReason.Cancelled, "Cancelled while walking."); return; }
                 var dist = board is null ? 999f : MarketBoardLocator.DistanceTo(board) ?? 999f;
+                Heartbeat($"walking — {dist:0}y to go, navRunning={Navigation.IsRunning()}");
                 if (dist <= MarketBoardLocator.InteractDistance)
                 {
                     Navigation.Stop();
+                    Diag($"NavigateBoard: reached the board ({dist:0}y) -> interact");
                     boardApproachStartPos = GameState.PlayerPosition(); // reset guard baseline after the walk
                     ThinkThen(HumanTiming.BeforeInteractBoard(), Phase.InteractBoard, "before-interact");
                     return;
@@ -901,6 +942,7 @@ public sealed class MarketBuyRunner : IDisposable
                 if (Elapsed > NavigateTimeout || (!Navigation.IsRunning() && Elapsed > TimeSpan.FromSeconds(3)))
                 {
                     Navigation.Stop();
+                    Diag($"NavigateBoard: giving up — {dist:0}y from board, navRunning={Navigation.IsRunning()}, {(long)Elapsed.TotalSeconds}s elapsed. {Snap()}");
                     StopItem(StopReason.OpenFailed, $"Navigation stopped {dist:0}y from the Market Board.");
                 }
                 return;
@@ -909,7 +951,10 @@ public sealed class MarketBuyRunner : IDisposable
             case Phase.InteractBoard:
             {
                 if (board is not null)
+                {
+                    Diag($"InteractBoard: interacting with \"{board.Name.TextValue}\" @ {MarketBoardLocator.DistanceTo(board) ?? -1f:0}y");
                     MarketBoardLocator.Interact(board);
+                }
                 interactSentUtc = DateTime.UtcNow;
                 Goto(Phase.BoardOpenWait);
                 return;
@@ -919,6 +964,7 @@ public sealed class MarketBuyRunner : IDisposable
             {
                 if (MarketBoardUi.IsBoardOpen())
                 {
+                    Diag("BoardOpenWait: board window is open -> search");
                     ThinkThen(HumanTiming.OrientAfterOpen(), Phase.PrepSearch, "orient");
                     return;
                 }
@@ -928,18 +974,23 @@ public sealed class MarketBuyRunner : IDisposable
                 var drift = Vector3.Distance(GameState.PlayerPosition(), boardApproachStartPos);
                 if (boardApproachStartPos != default && drift > MovementGuardYalms)
                 {
+                    Diag($"BoardOpenWait: drifted {drift:0}y from interact spot — aborting. {Snap()}");
                     StopItem(StopReason.OpenFailed, $"Character moved {drift:0}y while opening the board — aborting.");
                     return;
                 }
 
                 if (DateTime.UtcNow - interactSentUtc > TimeSpan.FromSeconds(2.5) && board is not null && Elapsed < BoardOpenTimeout)
                 {
+                    Diag("BoardOpenWait: window not open after 2.5s — re-interacting");
                     MarketBoardLocator.Interact(board);
                     interactSentUtc = DateTime.UtcNow;
                     return;
                 }
                 if (Elapsed > BoardOpenTimeout)
+                {
+                    Diag($"BoardOpenWait: window never opened after {BoardOpenTimeout.TotalSeconds:0}s. {Snap()}");
                     StopItem(StopReason.OpenFailed, "The Market Board window did not open.");
+                }
                 return;
             }
 
@@ -1009,18 +1060,22 @@ public sealed class MarketBuyRunner : IDisposable
                 var p = MarketBoardUi.GetSearchProgress(resolvedItemId);
                 if (p.ExactItemPresent && p.ExactRowRendered && !p.Working)
                 {
+                    Diag($"SearchWait: results ready for \"{result!.ItemName}\" -> open listings");
                     ThinkThen(HumanTiming.ReadResultsAndPickItem(), Phase.OpenListings, "read-results");
                     return;
                 }
                 var obs = SearchInput.Observe();
+                Heartbeat($"box=\"{obs.Text}\" working={obs.Working} agentItems={obs.AgentItems} exactPresent={p.ExactItemPresent} rowRendered={p.ExactRowRendered} retype={retypeCount}");
                 if (Elapsed > TimeSpan.FromSeconds(3) && !obs.Working && obs.AgentItems == 0)
                 {
                     if (retypeCount >= 3)
                     {
+                        Diag($"SearchWait: search never ran after {retypeCount} retries (box=\"{obs.Text}\")");
                         StopItem(StopReason.SearchFailed, $"Search never ran (box shows \"{obs.Text}\").");
                         return;
                     }
                     retypeCount++;
+                    Diag($"SearchWait: no results — retype/re-enter attempt {retypeCount}");
                     // alternate: re-press Enter, then re-type
                     if (retypeCount % 2 == 1)
                         SearchInput.Submit();
@@ -1062,6 +1117,7 @@ public sealed class MarketBuyRunner : IDisposable
             case Phase.ListingsWait:
             {
                 var s = MarketBoardUi.GetListingsState();
+                Heartbeat($"listings avail={s.Available} itemId={s.ItemId} count={s.ListingCount}");
                 if (s.Available && s.ItemId == resolvedItemId)
                 {
                     if (s.ListingCount != listingCountSeen)
@@ -1083,7 +1139,10 @@ public sealed class MarketBuyRunner : IDisposable
                     }
                 }
                 if (Elapsed > ListingsTimeout)
+                {
+                    Diag($"ListingsWait: listings never loaded (avail={s.Available} itemId={s.ItemId} count={s.ListingCount})");
                     StopItem(StopReason.SearchFailed, "Listings never loaded.");
+                }
                 return;
             }
 
@@ -1093,6 +1152,8 @@ public sealed class MarketBuyRunner : IDisposable
                 var ranked = ListingReader.RankByPrice(raw, item!.Quality);
                 acceptable = ranked.Where(l => l.UnitPrice <= item.MaxUnitPrice).ToList();
                 rejected = ranked.Where(l => l.UnitPrice > item.MaxUnitPrice).ToList();
+                Diag($"Read: {ranked.Count} listings, {acceptable.Count} <= {item.MaxUnitPrice}g ceiling, {rejected.Count} over. "
+                     + $"cheapest={(ranked.Count > 0 ? ranked.Min(l => l.UnitPrice) + "g" : "n/a")}");
 
                 if (item.Quantity <= 0)
                 {
@@ -1279,10 +1340,49 @@ public sealed class MarketBuyRunner : IDisposable
 
     private void Goto(Phase next)
     {
-        if (recorder.IsRecording && next != phase)
-            recorder.RunnerEvent("phase", new() { ["from"] = phase.ToString(), ["to"] = next.ToString() });
+        if (next != phase)
+        {
+            if (recorder.IsRecording)
+                recorder.RunnerEvent("phase", new() { ["from"] = phase.ToString(), ["to"] = next.ToString() });
+            Plugin.Log.Information($"[Emptor] phase {phase} -> {next}  ({(long)Elapsed.TotalMilliseconds}ms in {phase})");
+        }
         phase = next;
         phaseEnteredUtc = DateTime.UtcNow;
+        heartbeatUtc = DateTime.UtcNow;
+    }
+
+    private DateTime heartbeatUtc;
+
+    /// <summary>Log to both the Dalamud log (persisted) and the config-window log.</summary>
+    private void Diag(string msg)
+    {
+        Plugin.Log.Information($"[Emptor] {msg}");
+        Log?.Invoke(msg);
+    }
+
+    /// <summary>Once every ~4s inside a polling phase, so a stall leaves a trail.</summary>
+    private void Heartbeat(string msg)
+    {
+        if (DateTime.UtcNow - heartbeatUtc < TimeSpan.FromSeconds(4))
+            return;
+        heartbeatUtc = DateTime.UtcNow;
+        Plugin.Log.Information($"[Emptor] {phase} +{(long)Elapsed.TotalSeconds}s  {msg}");
+    }
+
+    /// <summary>Everything relevant to a travel / board-locate decision, one line.</summary>
+    private static string Snap()
+    {
+        var p = GameState.PlayerPosition();
+        var near = MarketBoardLocator.FindNearest(999f);
+        var nearStr = near is null
+            ? "none<=999y"
+            : $"\"{near.Name.TextValue}\"@{MarketBoardLocator.DistanceTo(near) ?? -1f:0}y";
+        var cfg = Plugin.Instance.Configuration;
+        return $"terr={GameState.TerritoryId} pos=({p.X:0},{p.Y:0},{p.Z:0}) mounted={PlayerActions.IsMounted} "
+             + $"between={GameState.IsBetweenAreas} boardOpen={MarketBoardUi.IsBoardOpen()} "
+             + $"ls[avail={Lifestream.Available} busy={Lifestream.IsBusy()}] "
+             + $"nav[avail={Navigation.Available} ready={Navigation.IsReady()} running={Navigation.IsRunning()}] "
+             + $"cfg[useNav={cfg.UseNavigation} useLi={cfg.UseLifestreamTravel}] nearestBoard={nearStr}";
     }
 
     // ---- teleport retry -----------------------------------------------
@@ -1409,8 +1509,9 @@ public sealed class MarketBuyRunner : IDisposable
     private void StopItem(StopReason reason, string message)
     {
         result!.StoppedReason = reason;
+        Plugin.Log.Information($"[Emptor] STOP item {itemIndex + 1}/{order!.Request.Items.Count} \"{result.ItemName}\": {reason} — {message} (bought {boughtQty}/{item?.Quantity})");
         Log?.Invoke($"{result.ItemName}: {reason} — {message}");
-        var more = itemIndex + 1 < order!.Request.Items.Count && !CancelledNow();
+        var more = itemIndex + 1 < order.Request.Items.Count && !CancelledNow();
         if (more)
         {
             // Close the board so the next item starts from a clean state — an
@@ -1440,6 +1541,7 @@ public sealed class MarketBuyRunner : IDisposable
             Log?.Invoke(recorder.Stop());
         startedCaptureForThisOrder = false;
 
+        Plugin.Log.Information($"[Emptor] ORDER {done.OrderId} {state} — {message} (spent {done.TotalGilSpent:N0} gil over {done.Items.Count} item(s))");
         Log?.Invoke($"Order {done.OrderId}: {state} — {message}");
         OrderFinished?.Invoke(done);
     }
