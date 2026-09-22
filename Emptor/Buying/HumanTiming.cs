@@ -55,6 +55,9 @@ public static class HumanTiming
     /// <summary>Pause before moving to the next item on the list.</summary>
     public static TimeSpan BetweenItems() => Draw(3600, 0.5, 1500, 15000);
 
+    /// <summary>Pause before re-opening the board to retry a failed purchase.</summary>
+    public static TimeSpan AfterFailedPurchase() => Draw(2200, 0.5, 900, 8000);
+
     /// <summary>Walk up to / turn toward the board before interacting.</summary>
     public static TimeSpan BeforeInteractBoard() => Draw(560, 0.45, 220, 2300);
 

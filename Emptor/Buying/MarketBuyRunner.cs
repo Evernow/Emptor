@@ -124,6 +124,7 @@ public sealed class MarketBuyRunner : IDisposable
     private readonly HashSet<ulong> boughtListingIds = new();
     private int boughtQty;
     private int retypeCount;
+    private bool purchaseRetried;
     private long stagedGil;
     private int typedChars;
     private DateTime nextKeystrokeUtc;
@@ -341,6 +342,7 @@ public sealed class MarketBuyRunner : IDisposable
                 boughtQty = 0;
                 retypeCount = 0;
                 triedLifestreamThisItem = false;
+                purchaseRetried = false;
                 Goto(Phase.ItemBegin);
                 return;
 
@@ -1506,11 +1508,32 @@ public sealed class MarketBuyRunner : IDisposable
         }
     }
 
+    private static readonly HashSet<StopReason> RetryableStopReasons = new()
+    {
+        StopReason.SearchFailed,
+        StopReason.PromptMismatch,
+        StopReason.Indeterminate,
+        StopReason.OpenFailed,
+    };
+
     private void StopItem(StopReason reason, string message)
     {
         result!.StoppedReason = reason;
         Plugin.Log.Information($"[Emptor] STOP item {itemIndex + 1}/{order!.Request.Items.Count} \"{result.ItemName}\": {reason} — {message} (bought {boughtQty}/{item?.Quantity})");
         Log?.Invoke($"{result.ItemName}: {reason} — {message}");
+
+        if (!purchaseRetried && !CancelledNow() && RetryableStopReasons.Contains(reason))
+        {
+            purchaseRetried = true;
+            retypeCount = 0;
+            Plugin.Log.Information($"[Emptor] Retrying \"{result.ItemName}\" once after {reason}.");
+            Log?.Invoke($"{result.ItemName}: retrying after {reason}.");
+            MarketBoardUi.DismissDialogs();
+            MarketBoardUi.HideBoard();
+            ThinkThen(HumanTiming.AfterFailedPurchase(), Phase.ItemBegin, "retry-purchase");
+            return;
+        }
+
         var more = itemIndex + 1 < order.Request.Items.Count && !CancelledNow();
         if (more)
         {
