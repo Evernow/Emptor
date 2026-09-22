@@ -16,9 +16,6 @@ public static class Keyboard
     private static extern nint SendMessageW(nint hWnd, uint msg, nint wParam, nint lParam);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern nint FindWindowW(string? lpClassName, string? lpWindowName);
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern short VkKeyScanW(char ch);
 
     private const uint WM_KEYDOWN = 0x0100;
@@ -27,17 +24,12 @@ public static class Keyboard
     private const int VK_BACK = 0x08;
     private const int VK_RETURN = 0x0D;
 
-    private static nint cached;
-
-    public static nint GameWindow
-    {
-        get
-        {
-            if (cached == 0)
-                cached = FindWindowW("FFXIVGAME", null);
-            return cached;
-        }
-    }
+    // FindWindowW("FFXIVGAME", null) matches ANY window of that class — with two
+    // clients running it can resolve to the wrong process, so keystrokes land in
+    // a window Emptor never interacted with while the one it's watching stays
+    // empty. Dalamud already knows exactly which HWND this plugin instance is
+    // injected into.
+    public static nint GameWindow => Plugin.PluginInterface.UiBuilder.WindowHandlePtr;
 
     public static bool Available => GameWindow != 0;
 
