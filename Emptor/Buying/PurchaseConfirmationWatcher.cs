@@ -22,6 +22,7 @@ public sealed class PurchaseConfirmationWatcher
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(15);
 
     private uint expectedItemId;
+    private uint expectedCatalogId;
     private ulong expectedListingId;
     private int expectedQuantity;
     private long unitPrice;
@@ -39,6 +40,15 @@ public sealed class PurchaseConfirmationWatcher
     public void Arm(CandidateListing listing, long gilOnHand)
     {
         expectedItemId = listing.ItemId;
+        // IMarketBoardPurchase.CatalogId (the server's confirmation) reports HQ
+        // items as baseId + 1,000,000, matching the game's normal "full item id"
+        // convention (NQ / +500,000 collectible / +1,000,000 HQ) — but
+        // IMarketBoardPurchaseHandler.CatalogId (the client's own request, seen
+        // in OnPurchaseRequested) reports the plain base id even when Hq. Without
+        // this, every HQ buy's ItemPurchased event failed to match and the
+        // watcher sat Pending until the 15s deadline turned it Indeterminate,
+        // even though the purchase had gone through.
+        expectedCatalogId = listing.Hq ? listing.ItemId + 1_000_000u : listing.ItemId;
         expectedListingId = listing.ListingId;
         expectedQuantity = listing.Quantity;
         unitPrice = listing.UnitPrice;
@@ -72,7 +82,7 @@ public sealed class PurchaseConfirmationWatcher
 
     public void OnItemPurchased(IMarketBoardPurchase purchase, long gilNow)
     {
-        if (!IsArmed || purchase.CatalogId != expectedItemId)
+        if (!IsArmed || purchase.CatalogId != expectedCatalogId)
             return;
 
         QuantityConfirmed = (int)purchase.ItemQuantity;
