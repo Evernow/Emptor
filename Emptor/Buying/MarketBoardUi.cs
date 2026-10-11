@@ -32,6 +32,7 @@ public static unsafe class MarketBoardUi
 
     public static void HideBoard()
     {
+        SearchInput.RestorePartialMatch();
         var module = AgentModule.Instance();
         var agent = module == null ? null : module->GetAgentByInternalId(AgentId.ItemSearch);
         if (agent != null && agent->IsAgentActive())

@@ -11,7 +11,8 @@ namespace Emptor.Buying;
 /// messages. Nothing from managed code (SetText, InsertText, input callbacks,
 /// RunSearch, clicking the Search button — which crashed the client twice) makes
 /// the client run its search. Only genuine typed input + a real Enter does.
-/// Partial Match is left exactly as the player has it.
+/// Partial Match is forced on, since the search doesn't populate without it,
+/// and restored to the player's setting when the board closes.
 /// </summary>
 public static unsafe class SearchInput
 {
@@ -37,6 +38,15 @@ public static unsafe class SearchInput
             return false;
         }
 
+        // With Partial Match off the client doesn't run the typed search, so the
+        // results never populate. Turn it on for the automated search.
+        if (!addon->PartialMatch)
+        {
+            originalPartialMatch ??= false;
+            SetPartialMatch(addon, true);
+            return false;
+        }
+
         var input = addon->SearchTextInput;
         if (input == null)
             return false;
@@ -54,6 +64,26 @@ public static unsafe class SearchInput
         }
 
         return inputBase->IsActive;
+    }
+
+    private static bool? originalPartialMatch;
+
+    private static void SetPartialMatch(AddonItemSearch* addon, bool value)
+    {
+        if (addon->PartialSearchCheckBox != null)
+            addon->PartialSearchCheckBox->SetChecked(value);
+        addon->PartialMatch = value;
+    }
+
+    /// <summary>Put Partial Match back to what the player had before Emptor forced it on.</summary>
+    public static void RestorePartialMatch()
+    {
+        if (originalPartialMatch is not { } original)
+            return;
+        originalPartialMatch = null;
+        var addon = Addon();
+        if (addon != null && addon->PartialMatch != original)
+            SetPartialMatch(addon, original);
     }
 
     public static void Refocus()

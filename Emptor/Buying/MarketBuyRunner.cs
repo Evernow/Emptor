@@ -1580,6 +1580,7 @@ public sealed class MarketBuyRunner : IDisposable
         lifestreamTravelActive = false;
         MarketBoardUi.DismissDialogs();
         MarketBoardUi.ClearStagedPurchase();
+        SearchInput.RestorePartialMatch();
         if (Plugin.Instance.Configuration.HideBoardWhenFinished)
             MarketBoardUi.HideBoard();
     }
